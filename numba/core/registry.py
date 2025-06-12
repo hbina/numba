@@ -20,7 +20,8 @@ class CPUTarget(TargetDescriptor):
     @cached_property
     def _toplevel_typing_context(self):
         # Lazily-initialized top-level typing context, for all threads
-        return typing.Context()
+        from numba.core.cpu_typing_context import CPUAtomicTypingContext
+        return CPUAtomicTypingContext()
 
     @property
     def target_context(self):
