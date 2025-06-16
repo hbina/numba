@@ -35,20 +35,18 @@ def hyperlink_user(user_obj):
     return "`%s <%s>`_" % (user_obj.login, user_obj.html_url)
 
 
-if __name__ == '__main__':
-    arguments = docopt(__doc__, version='1.0')
-    beginning = arguments['--beginning']
-    target_ghrepo = arguments['--repo']
-    github_token = arguments['--token']
-    regex_digits = arguments['--digits']
+if __name__ == "__main__":
+    arguments = docopt(__doc__, version="1.0")
+    beginning = arguments["--beginning"]
+    target_ghrepo = arguments["--repo"]
+    github_token = arguments["--token"]
+    regex_digits = arguments["--digits"]
     summary = arguments["--summary"]
     ghrepo = Github(github_token).get_repo(target_ghrepo)
-    repo = Repo('.')
-    all_commits = [x for x in repo.iter_commits(f'{beginning}..HEAD')]
-    merge_commits = [x for x in all_commits
-                     if 'Merge pull request' in x.message]
-    prmatch = re.compile(
-        f'^Merge pull request #([0-9]{{{regex_digits}}}) from.*')
+    repo = Repo(".")
+    all_commits = [x for x in repo.iter_commits(f"{beginning}..HEAD")]
+    merge_commits = [x for x in all_commits if "Merge pull request" in x.message]
+    prmatch = re.compile(f"^Merge pull request #([0-9]{{{regex_digits}}}) from.*")
     ordered = {}
     authors = set()
     for x in merge_commits:
@@ -73,9 +71,10 @@ if __name__ == '__main__':
                 pr_authors.add(c.committer)
             elif not author:
                 missing_authors.add((pull, c))
-        print("* PR %s: %s (%s)" % (hyperlink, ordered[k],
-                                    " ".join([hyperlink_user(u) for u in
-                                              pr_authors])))
+        print(
+            "* PR %s: %s (%s)"
+            % (hyperlink, ordered[k], " ".join([hyperlink_user(u) for u in pr_authors]))
+        )
         for a in pr_authors:
             authors.add(a)
     if missing_authors:
@@ -89,7 +88,9 @@ if __name__ == '__main__':
     else:
         print()
     print("Authors:\n")
-    [print('* %s' % hyperlink_user(x)) for x in sorted(authors, key=lambda x:
-                                                       x.login.lower())]
+    [
+        print("* %s" % hyperlink_user(x))
+        for x in sorted(authors, key=lambda x: x.login.lower())
+    ]
     if summary:
         print("\nTotal authors: %s" % len(authors))

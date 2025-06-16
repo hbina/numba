@@ -2,34 +2,38 @@
 Typing declarations for np.timedelta64.
 """
 
-
 from itertools import product
 import operator
 
 from numba.core import types, errors
-from numba.core.typing.templates import (AttributeTemplate, ConcreteTemplate,
-                                         AbstractTemplate, infer_global, infer,
-                                         infer_getattr, signature)
+from numba.core.typing.templates import (
+    AttributeTemplate,
+    ConcreteTemplate,
+    AbstractTemplate,
+    infer_global,
+    infer,
+    infer_getattr,
+    signature,
+)
 from numba.np import npdatetime_helpers
 from numba.np.numpy_support import numpy_version
 
 
 # timedelta64-only operations
 
-class TimedeltaUnaryOp(AbstractTemplate):
 
+class TimedeltaUnaryOp(AbstractTemplate):
     def generic(self, args, kws):
         if len(args) == 2:
             # Guard against binary + and -
             return
-        op, = args
+        (op,) = args
         if not isinstance(op, types.NPTimedelta):
             return
         return signature(op, op)
 
 
 class TimedeltaBinOp(AbstractTemplate):
-
     def generic(self, args, kws):
         if len(args) == 1:
             # Guard against unary + and -
@@ -44,7 +48,6 @@ class TimedeltaBinOp(AbstractTemplate):
 
 
 class TimedeltaCmpOp(AbstractTemplate):
-
     def generic(self, args, kws):
         # For equality comparisons, all units are inter-comparable
         left, right = args
@@ -54,19 +57,18 @@ class TimedeltaCmpOp(AbstractTemplate):
 
 
 class TimedeltaOrderedCmpOp(AbstractTemplate):
-
     def generic(self, args, kws):
         # For ordered comparisons, units must be compatible
         left, right = args
         if not all(isinstance(tp, types.NPTimedelta) for tp in args):
             return
-        if (npdatetime_helpers.can_cast_timedelta_units(left.unit, right.unit) or
-            npdatetime_helpers.can_cast_timedelta_units(right.unit, left.unit)):
+        if npdatetime_helpers.can_cast_timedelta_units(
+            left.unit, right.unit
+        ) or npdatetime_helpers.can_cast_timedelta_units(right.unit, left.unit):
             return signature(types.boolean, left, right)
 
 
 class TimedeltaMixOp(AbstractTemplate):
-
     def generic(self, args, kws):
         """
         (timedelta64, {int, float}) -> timedelta64
@@ -91,7 +93,6 @@ class TimedeltaMixOp(AbstractTemplate):
 
 
 class TimedeltaDivOp(AbstractTemplate):
-
     def generic(self, args, kws):
         """
         (timedelta64, {int, float}) -> timedelta64
@@ -101,8 +102,9 @@ class TimedeltaDivOp(AbstractTemplate):
         if not isinstance(left, types.NPTimedelta):
             return
         if isinstance(right, types.NPTimedelta):
-            if (npdatetime_helpers.can_cast_timedelta_units(left.unit, right.unit)
-                or npdatetime_helpers.can_cast_timedelta_units(right.unit, left.unit)):
+            if npdatetime_helpers.can_cast_timedelta_units(
+                left.unit, right.unit
+            ) or npdatetime_helpers.can_cast_timedelta_units(right.unit, left.unit):
                 return signature(types.float64, left, right)
         elif isinstance(right, (types.Float)):
             return signature(left, left, right)
@@ -116,36 +118,44 @@ class TimedeltaDivOp(AbstractTemplate):
 class TimedeltaUnaryPos(TimedeltaUnaryOp):
     key = operator.pos
 
+
 @infer_global(operator.neg)
 class TimedeltaUnaryNeg(TimedeltaUnaryOp):
     key = operator.neg
+
 
 @infer_global(operator.add)
 @infer_global(operator.iadd)
 class TimedeltaBinAdd(TimedeltaBinOp):
     key = operator.add
 
+
 @infer_global(operator.sub)
 @infer_global(operator.isub)
 class TimedeltaBinSub(TimedeltaBinOp):
     key = operator.sub
+
 
 @infer_global(operator.mul)
 @infer_global(operator.imul)
 class TimedeltaBinMult(TimedeltaMixOp):
     key = operator.mul
 
+
 @infer_global(operator.truediv)
 @infer_global(operator.itruediv)
 class TimedeltaTrueDiv(TimedeltaDivOp):
     key = operator.truediv
+
 
 @infer_global(operator.floordiv)
 @infer_global(operator.ifloordiv)
 class TimedeltaFloorDiv(TimedeltaDivOp):
     key = operator.floordiv
 
+
 if numpy_version >= (1, 25):
+
     @infer_global(operator.eq)
     class TimedeltaCmpEq(TimedeltaOrderedCmpOp):
         key = operator.eq
@@ -154,6 +164,7 @@ if numpy_version >= (1, 25):
     class TimedeltaCmpNe(TimedeltaOrderedCmpOp):
         key = operator.ne
 else:
+
     @infer_global(operator.eq)
     class TimedeltaCmpEq(TimedeltaCmpOp):
         key = operator.eq
@@ -162,17 +173,21 @@ else:
     class TimedeltaCmpNe(TimedeltaCmpOp):
         key = operator.ne
 
+
 @infer_global(operator.lt)
 class TimedeltaCmpLt(TimedeltaOrderedCmpOp):
     key = operator.lt
+
 
 @infer_global(operator.le)
 class TimedeltaCmpLE(TimedeltaOrderedCmpOp):
     key = operator.le
 
+
 @infer_global(operator.gt)
 class TimedeltaCmpGt(TimedeltaOrderedCmpOp):
     key = operator.gt
+
 
 @infer_global(operator.ge)
 class TimedeltaCmpGE(TimedeltaOrderedCmpOp):
@@ -185,6 +200,7 @@ class TimedeltaAbs(TimedeltaUnaryOp):
 
 
 # datetime64 operations
+
 
 @infer_global(operator.add)
 @infer_global(operator.iadd)
@@ -205,10 +221,10 @@ class DatetimePlusTimedelta(AbstractTemplate):
         else:
             return
         if isinstance(dt, types.NPDatetime):
-            unit = npdatetime_helpers.combine_datetime_timedelta_units(dt.unit,
-                                                                       td.unit)
+            unit = npdatetime_helpers.combine_datetime_timedelta_units(dt.unit, td.unit)
             if unit is not None:
                 return signature(types.NPDatetime(unit), left, right)
+
 
 @infer_global(operator.sub)
 @infer_global(operator.isub)
@@ -220,12 +236,11 @@ class DatetimeMinusTimedelta(AbstractTemplate):
             # Guard against unary -
             return
         dt, td = args
-        if isinstance(dt, types.NPDatetime) and isinstance(td,
-                                                           types.NPTimedelta):
-            unit = npdatetime_helpers.combine_datetime_timedelta_units(dt.unit,
-                                                                       td.unit)
+        if isinstance(dt, types.NPDatetime) and isinstance(td, types.NPTimedelta):
+            unit = npdatetime_helpers.combine_datetime_timedelta_units(dt.unit, td.unit)
             if unit is not None:
                 return signature(types.NPDatetime(unit), dt, td)
+
 
 @infer_global(operator.sub)
 class DatetimeMinusDatetime(AbstractTemplate):
@@ -236,14 +251,12 @@ class DatetimeMinusDatetime(AbstractTemplate):
             # Guard against unary -
             return
         left, right = args
-        if isinstance(left, types.NPDatetime) and isinstance(right,
-                                                             types.NPDatetime):
+        if isinstance(left, types.NPDatetime) and isinstance(right, types.NPDatetime):
             unit = npdatetime_helpers.get_best_unit(left.unit, right.unit)
             return signature(types.NPTimedelta(unit), left, right)
 
 
 class DatetimeCmpOp(AbstractTemplate):
-
     def generic(self, args, kws):
         # For datetime64 comparisons, all units are inter-comparable
         left, right = args
@@ -256,21 +269,26 @@ class DatetimeCmpOp(AbstractTemplate):
 class DatetimeCmpEq(DatetimeCmpOp):
     key = operator.eq
 
+
 @infer_global(operator.ne)
 class DatetimeCmpNe(DatetimeCmpOp):
     key = operator.ne
+
 
 @infer_global(operator.lt)
 class DatetimeCmpLt(DatetimeCmpOp):
     key = operator.lt
 
+
 @infer_global(operator.le)
 class DatetimeCmpLE(DatetimeCmpOp):
     key = operator.le
 
+
 @infer_global(operator.gt)
 class DatetimeCmpGt(DatetimeCmpOp):
     key = operator.gt
+
 
 @infer_global(operator.ge)
 class DatetimeCmpGE(DatetimeCmpOp):

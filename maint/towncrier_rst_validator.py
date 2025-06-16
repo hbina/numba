@@ -46,11 +46,8 @@ def list_rst_filename() -> str:
             stderr=STDOUT,
         )
         all_files = output.strip().splitlines()
-        rst_dir_modified = [
-            file for file in all_files if file.startswith(rst_dir)
-        ]
-        print("Found modified .rst files in directory",
-              f"{rst_dir} from git diff: ")
+        rst_dir_modified = [file for file in all_files if file.startswith(rst_dir)]
+        print("Found modified .rst files in directory", f"{rst_dir} from git diff: ")
         for file in rst_dir_modified:
             print(file)
         print("\n")
@@ -85,13 +82,13 @@ all_towncrier_rst = [
     if not (rst.startswith("template") or rst.startswith("README"))
 ]
 all_pr_ids = [int(rst.split(".")[0]) for rst in all_towncrier_rst]
-assert len(set(all_pr_ids)) == len(
-    all_pr_ids
-), "All PR IDs must be unique. Please check for duplicate PR IDs"
+assert len(set(all_pr_ids)) == len(all_pr_ids), (
+    "All PR IDs must be unique. Please check for duplicate PR IDs"
+)
 
-assert (
-    len(filename.split(".")) == 3
-), "Filename must be in the format <PR_ID>.<type_of_change>.rst"
+assert len(filename.split(".")) == 3, (
+    "Filename must be in the format <PR_ID>.<type_of_change>.rst"
+)
 
 # Must be one of the required types of changes
 assert filename.split(".")[1] in types_of_changes, (
@@ -113,8 +110,7 @@ with open(file, "r") as f:
     assert len(title) > 0, "Title must not be empty"
     underline = contents[1]
     for underline_type in underline:
-        assert underline_type == "-", \
-            "Header should be underlined with - characters"
+        assert underline_type == "-", "Header should be underlined with - characters"
     assert len(title) == len(underline), (
         "Title and underline must be the same length."
         + f" (Found Title: {len(title)}, Underline: {len(underline)})"

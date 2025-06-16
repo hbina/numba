@@ -7,22 +7,44 @@ import numba
 import numba.parfors.parfor
 from numba import njit, jit
 from numba.core import ir_utils
-from numba.core import types, ir,  compiler
+from numba.core import types, ir, compiler
 from numba.core.registry import cpu_target
-from numba.core.ir_utils import (copy_propagate, apply_copy_propagate,
-                            get_name_var_table, remove_dels, remove_dead,
-                            remove_call_handlers, alias_func_extensions)
+from numba.core.ir_utils import (
+    copy_propagate,
+    apply_copy_propagate,
+    get_name_var_table,
+    remove_dels,
+    remove_dead,
+    remove_call_handlers,
+    alias_func_extensions,
+)
 from numba.core.typed_passes import type_inference_stage
 from numba.core.compiler_machinery import FunctionPass, register_pass, PassManager
-from numba.core.untyped_passes import (ExtractByteCode, TranslateByteCode, FixupArgs,
-                             IRProcessing, DeadBranchPrune,
-                             RewriteSemanticConstants, GenericRewrites,
-                             WithLifting, PreserveIR, InlineClosureLikes)
+from numba.core.untyped_passes import (
+    ExtractByteCode,
+    TranslateByteCode,
+    FixupArgs,
+    IRProcessing,
+    DeadBranchPrune,
+    RewriteSemanticConstants,
+    GenericRewrites,
+    WithLifting,
+    PreserveIR,
+    InlineClosureLikes,
+)
 
-from numba.core.typed_passes import (NopythonTypeInference, AnnotateTypes,
-                           NopythonRewrites, PreParforPass, ParforPass,
-                           DumpParforDiagnostics, NativeLowering,
-                           IRLegalization, NoPythonBackend, NativeLowering)
+from numba.core.typed_passes import (
+    NopythonTypeInference,
+    AnnotateTypes,
+    NopythonRewrites,
+    PreParforPass,
+    ParforPass,
+    DumpParforDiagnostics,
+    NativeLowering,
+    IRLegalization,
+    NoPythonBackend,
+    NativeLowering,
+)
 import numpy as np
 from numba.tests.support import skip_parfors_unsupported, needs_blas, TestCase
 import unittest
@@ -38,26 +60,30 @@ def test_will_propagate(b, z, w):
     a = 2 * x
     return a < b
 
-def null_func(a,b,c,d):
+
+def null_func(a, b, c, d):
     False
+
 
 @numba.njit
 def dummy_aliased_func(A):
     return A
 
+
 def alias_ext_dummy_func(lhs_name, args, alias_map, arg_aliases):
     ir_utils._add_alias(lhs_name, args[0].name, alias_map, arg_aliases)
+
 
 def findLhsAssign(func_ir, var):
     for label, block in func_ir.blocks.items():
         for i, inst in enumerate(block.body):
-            if isinstance(inst, ir.Assign) and inst.target.name==var:
+            if isinstance(inst, ir.Assign) and inst.target.name == var:
                 return True
 
     return False
 
-class TestRemoveDead(TestCase):
 
+class TestRemoveDead(TestCase):
     _numba_parallel_test_ = False
 
     def compile_parallel(self, func, arg_types):
@@ -71,10 +97,18 @@ class TestRemoveDead(TestCase):
         typingctx.refresh()
         targetctx.refresh()
         args = (types.int64, types.int64, types.int64)
-        typemap, _, calltypes, _ = type_inference_stage(typingctx, targetctx, test_ir, args, None)
+        typemap, _, calltypes, _ = type_inference_stage(
+            typingctx, targetctx, test_ir, args, None
+        )
         remove_dels(test_ir.blocks)
         in_cps, out_cps = copy_propagate(test_ir.blocks, typemap)
-        apply_copy_propagate(test_ir.blocks, in_cps, get_name_var_table(test_ir.blocks), typemap, calltypes)
+        apply_copy_propagate(
+            test_ir.blocks,
+            in_cps,
+            get_name_var_table(test_ir.blocks),
+            typemap,
+            calltypes,
+        )
 
         remove_dead(test_ir.blocks, test_ir.arg_names, test_ir)
         self.assertFalse(findLhsAssign(test_ir, "x"))
@@ -85,10 +119,12 @@ class TestRemoveDead(TestCase):
 
         def seed_call_exists(func_ir):
             for inst in func_ir.blocks[0].body:
-                if (isinstance(inst, ir.Assign) and
-                    isinstance(inst.value, ir.Expr) and
-                    inst.value.op == 'call' and
-                    func_ir.get_definition(inst.value.func).attr == 'seed'):
+                if (
+                    isinstance(inst, ir.Assign)
+                    and isinstance(inst.value, ir.Expr)
+                    and inst.value.op == "call"
+                    and func_ir.get_definition(inst.value.func).attr == "seed"
+                ):
                     return True
             return False
 
@@ -97,7 +133,7 @@ class TestRemoveDead(TestCase):
         self.assertTrue(seed_call_exists(test_ir))
 
     def run_array_index_test(self, func):
-        A1 = np.arange(6).reshape(2,3)
+        A1 = np.arange(6).reshape(2, 3)
         A2 = A1.copy()
         i = 0
         pfunc = self.compile_parallel(func, (numba.typeof(A1), numba.typeof(i)))
@@ -123,21 +159,21 @@ class TestRemoveDead(TestCase):
     def test_alias_transpose1(self):
         def func(A, i):
             B = A.T
-            B[i,0] = 3
+            B[i, 0] = 3
 
         self.run_array_index_test(func)
 
     def test_alias_transpose2(self):
         def func(A, i):
             B = A.transpose()
-            B[i,0] = 3
+            B[i, 0] = 3
 
         self.run_array_index_test(func)
 
     def test_alias_transpose3(self):
         def func(A, i):
             B = np.transpose(A)
-            B[i,0] = 3
+            B[i, 0] = 3
 
         self.run_array_index_test(func)
 
@@ -146,6 +182,7 @@ class TestRemoveDead(TestCase):
     def test_alias_ctypes(self):
         # use xxnrm2 to test call a C function with ctypes
         from numba.np.linalg import _BLAS
+
         xxnrm2 = _BLAS().numba_xxnrm2(types.float64)
 
         def remove_dead_xxnrm2(rhs, lives, call_list):
@@ -177,15 +214,15 @@ class TestRemoveDead(TestCase):
 
     def test_alias_reshape1(self):
         def func(A, i):
-            B = np.reshape(A, (3,2))
-            B[i,0] = 3
+            B = np.reshape(A, (3, 2))
+            B[i, 0] = 3
 
         self.run_array_index_test(func)
 
     def test_alias_reshape2(self):
         def func(A, i):
-            B = A.reshape(3,2)
-            B[i,0] = 3
+            B = A.reshape(3, 2)
+            B[i, 0] = 3
 
         self.run_array_index_test(func)
 
@@ -197,8 +234,9 @@ class TestRemoveDead(TestCase):
         # save global state
         old_ext_handlers = alias_func_extensions.copy()
         try:
-            alias_func_extensions[('dummy_aliased_func',
-                'numba.tests.test_remove_dead')] = alias_ext_dummy_func
+            alias_func_extensions[
+                ("dummy_aliased_func", "numba.tests.test_remove_dead")
+            ] = alias_ext_dummy_func
             self.run_array_index_test(func)
         finally:
             # recover global state
@@ -208,6 +246,7 @@ class TestRemoveDead(TestCase):
         """make sure lhs variable of assignment is considered live if used in
         rhs (test for #6715).
         """
+
         def func():
             for i in range(3):
                 a = (lambda j: j)(i)
@@ -221,6 +260,7 @@ class TestRemoveDead(TestCase):
         """Make sure aliases are considered in remove dead extension for
         parfors.
         """
+
         def func():
             n = 11
             numba.parfors.parfor.init_prange()
@@ -248,18 +288,22 @@ class TestRemoveDead(TestCase):
                     state.flags.auto_parallel,
                     state.flags,
                     state.metadata,
-                    state.parfor_diagnostics
+                    state.parfor_diagnostics,
                 )
                 remove_dels(state.func_ir.blocks)
                 parfor_pass.array_analysis.run(state.func_ir.blocks)
                 parfor_pass._convert_loop(state.func_ir.blocks)
-                remove_dead(state.func_ir.blocks,
-                            state.func_ir.arg_names,
-                            state.func_ir,
-                            state.typemap)
-                numba.parfors.parfor.get_parfor_params(state.func_ir.blocks,
-                                                parfor_pass.options.fusion,
-                                                parfor_pass.nested_fusion_info)
+                remove_dead(
+                    state.func_ir.blocks,
+                    state.func_ir.arg_names,
+                    state.func_ir,
+                    state.typemap,
+                )
+                numba.parfors.parfor.get_parfor_params(
+                    state.func_ir.blocks,
+                    parfor_pass.options.fusion,
+                    parfor_pass.nested_fusion_info,
+                )
                 return True
 
         class TestPipeline(compiler.Compiler):
@@ -267,8 +311,9 @@ class TestRemoveDead(TestCase):
             remove_dead(). Copy propagation can replace B in the example code
             which this pipeline avoids.
             """
+
             def define_pipelines(self):
-                name = 'test parfor aliasing'
+                name = "test parfor aliasing"
                 pm = PassManager(name)
                 pm.add_pass(TranslateByteCode, "analyzing bytecode")
                 pm.add_pass(FixupArgs, "fix up args")
@@ -279,8 +324,9 @@ class TestRemoveDead(TestCase):
                     pm.add_pass(GenericRewrites, "nopython rewrites")
                     pm.add_pass(RewriteSemanticConstants, "rewrite semantic constants")
                     pm.add_pass(DeadBranchPrune, "dead branch pruning")
-                pm.add_pass(InlineClosureLikes,
-                            "inline calls to locally defined closures")
+                pm.add_pass(
+                    InlineClosureLikes, "inline calls to locally defined closures"
+                )
                 # typing
                 pm.add_pass(NopythonTypeInference, "nopython frontend")
 
@@ -299,6 +345,7 @@ class TestSSADeadBranchPrune(TestCase):
     """
     Test issues that required dead-branch-prune on SSA IR
     """
+
     def test_issue_9706(self):
         @njit
         def foo(x, y=None):
@@ -323,7 +370,7 @@ class TestSSADeadBranchPrune(TestCase):
     def test_issue_6541(self):
         @njit
         def f(xs, out=None):
-            N, = xs.shape
+            (N,) = xs.shape
             if out is None:
                 out = np.arange(N)
             else:
@@ -332,7 +379,7 @@ class TestSSADeadBranchPrune(TestCase):
             return out
 
         expected = f(np.array([3, 1, 2]))
-        out = np.arange(3, dtype='i8')
+        out = np.arange(3, dtype="i8")
         got = f(np.array([3, 1, 2]), out=out)
         self.assertIs(got, out)
         self.assertPreciseEqual(got, expected)
@@ -356,8 +403,7 @@ class TestSSADeadBranchPrune(TestCase):
 
         self.assertIsNone(compute(smth=1, weights=None))
         kwargs = dict(smth=1, weights=np.arange(5), default=np.zeros(1))
-        self.assertEqual(compute(**kwargs),
-                         compute.py_func(**kwargs))
+        self.assertEqual(compute(**kwargs), compute.py_func(**kwargs))
 
     def test_issue_5661(self):
         @njit

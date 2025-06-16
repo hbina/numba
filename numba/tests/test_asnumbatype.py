@@ -1,6 +1,7 @@
 """
 Tests for the as_numba_type() machinery.
 """
+
 import typing as py_typing
 
 
@@ -13,8 +14,7 @@ from numba import jit
 from numba.core import cgutils, types
 from numba.core.datamodel.models import PrimitiveModel
 from numba.core.errors import TypingError
-from numba.core.extending import (register_model, type_callable, unbox,
-                                  NativeValue)
+from numba.core.extending import register_model, type_callable, unbox, NativeValue
 from numba.core.types import Number
 from numba.core.typing.typeof import typeof, typeof_impl
 from numba.core.typing.asnumbatype import as_numba_type, AsNumbaTypeRegistry
@@ -23,7 +23,6 @@ from numba.tests.support import TestCase
 
 
 class TestAsNumbaType(TestCase):
-
     int_nb_type = typeof(0)
     float_nb_type = typeof(0.0)
     complex_nb_type = typeof(complex(0))
@@ -44,9 +43,7 @@ class TestAsNumbaType(TestCase):
             types.intp,
             types.boolean,
             types.ListType(types.float64),
-            types.DictType(
-                types.intp, types.Tuple([types.float32, types.float32])
-            ),
+            types.DictType(types.intp, types.Tuple([types.float32, types.float32])),
         ]
 
         for ty in numba_types:
@@ -92,8 +89,9 @@ class TestAsNumbaType(TestCase):
         # TypingError if the right type is not NoneType.
         with self.assertRaises(TypingError) as raises:
             as_numba_type(py_typing.Union[int, float])
-        self.assertIn("Cannot type Union that is not an Optional",
-                      str(raises.exception))
+        self.assertIn(
+            "Cannot type Union that is not an Optional", str(raises.exception)
+        )
 
     def test_nested_containers(self):
         IntList = py_typing.List[int]
@@ -103,19 +101,18 @@ class TestAsNumbaType(TestCase):
         )
         self.assertEqual(
             as_numba_type(py_typing.List[py_typing.Dict[float, bool]]),
-            types.ListType(
-                types.DictType(self.float_nb_type, self.bool_nb_type)
-            ),
+            types.ListType(types.DictType(self.float_nb_type, self.bool_nb_type)),
         )
         self.assertEqual(
             as_numba_type(
-                py_typing.Set[py_typing.Tuple[py_typing.Optional[int], float]]),
-            types.Set(types.Tuple(
-                [types.Optional(self.int_nb_type), self.float_nb_type])),
+                py_typing.Set[py_typing.Tuple[py_typing.Optional[int], float]]
+            ),
+            types.Set(
+                types.Tuple([types.Optional(self.int_nb_type), self.float_nb_type])
+            ),
         )
 
     def test_jitclass_registers(self):
-
         @jitclass
         class MyInt:
             x: int
@@ -131,9 +128,7 @@ class TestAsNumbaType(TestCase):
 
         pair_nb_type = types.Tuple((self.int_nb_type, self.int_nb_type))
         self.assertEqual(as_numba_type(Pair), pair_nb_type)
-        self.assertEqual(
-            as_numba_type(ListOfPairs), types.ListType(pair_nb_type)
-        )
+        self.assertEqual(as_numba_type(ListOfPairs), types.ListType(pair_nb_type))
 
     def test_overwrite_type(self):
         as_numba_type = AsNumbaTypeRegistry()
@@ -220,8 +215,7 @@ class TestAsNumbaType(TestCase):
         def unbox_bfloat16(ty, obj, c):
             ll_type = c.context.get_argument_type(ty)
             val = cgutils.alloca_once(c.builder, ll_type)
-            is_error_ptr = cgutils.alloca_once_value(c.builder,
-                                                     cgutils.false_bit)
+            is_error_ptr = cgutils.alloca_once_value(c.builder, cgutils.false_bit)
 
             with ExitStack() as stack:
                 value_obj = c.pyapi.object_getattr_string(obj, "_value")
@@ -232,14 +226,14 @@ class TestAsNumbaType(TestCase):
                 value_native = c.unbox(types.uint16, value_obj)
                 c.pyapi.decref(value_obj)
 
-                with cgutils.early_exit_if(c.builder, stack,
-                                           value_native.is_error):
+                with cgutils.early_exit_if(c.builder, stack, value_native.is_error):
                     c.builder.store(cgutils.true_bit, is_error_ptr)
 
                 c.builder.store(value_native.value, val)
 
-            return NativeValue(c.builder.load(val),
-                               is_error=c.builder.load(is_error_ptr))
+            return NativeValue(
+                c.builder.load(val), is_error=c.builder.load(is_error_ptr)
+            )
 
         # We never call bfloat16 to construct one inside a jitted function, but
         # we need this typing so that the type of the bfloat16 class can be
@@ -284,5 +278,5 @@ class TestAsNumbaType(TestCase):
         self.assertFalse(instancecheck(1))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

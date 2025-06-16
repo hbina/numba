@@ -9,7 +9,7 @@ from numba.core import config
 
 
 class TLS(threading.local):
-    """Use a subclass to properly initialize the TLS variables in all threads.""" # noqa: E501
+    """Use a subclass to properly initialize the TLS variables in all threads."""  # noqa: E501
 
     def __init__(self):
         self.tracing = False
@@ -115,7 +115,7 @@ def dotrace(*args, **kwds):
                             result = func(*args, **kwds)
                         finally:
                             tls.tracing = True
-                    except: # noqa: E722
+                    except:  # noqa: E722
                         type, value, traceback = sys.exc_info()
                         leave.append(" => exception thrown\n\traise ")
                         mname = type.__module__

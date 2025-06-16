@@ -4,17 +4,19 @@ import traceback
 
 from numba import jit, njit
 from numba.core import types, errors, utils
-from numba.tests.support import (TestCase, expected_failure_py311,
-                                 expected_failure_py312,
-                                 expected_failure_py313,
-                                 )
+from numba.tests.support import (
+    TestCase,
+    expected_failure_py311,
+    expected_failure_py312,
+    expected_failure_py313,
+)
 import unittest
 
 
-force_pyobj_flags = {'nopython': False, 'forceobj': True}
-no_pyobj_flags = {'nopython': True, '_nrt': False}
-no_pyobj_flags_w_nrt = {'nopython': True, '_nrt': True}
-no_gil_flags = {'nopython': True, 'nogil': True, '_nrt': True}
+force_pyobj_flags = {"nopython": False, "forceobj": True}
+no_pyobj_flags = {"nopython": True, "_nrt": False}
+no_pyobj_flags_w_nrt = {"nopython": True, "_nrt": True}
+no_gil_flags = {"nopython": True, "nogil": True, "_nrt": True}
 
 
 class MyError(Exception):
@@ -58,8 +60,7 @@ class UDENoArgSuper(Exception):
         return same
 
     def __hash__(self):
-        return hash((super(UDENoArgSuper).__hash__(), self.deferarg,
-                     self.value0))
+        return hash((super(UDENoArgSuper).__hash__(), self.deferarg, self.value0))
 
 
 def raise_class(exc):
@@ -72,6 +73,7 @@ def raise_class(exc):
             # The exception type is looked up on a module (issue #1624)
             raise np.linalg.LinAlgError
         return i
+
     return raiser
 
 
@@ -84,6 +86,7 @@ def raise_instance(exc, arg):
         elif i == 3:
             raise np.linalg.LinAlgError(arg, 3)
         return i
+
     return raiser
 
 
@@ -96,6 +99,7 @@ def raise_instance_runtime_args(exc):
         elif i == 3:
             raise np.linalg.LinAlgError(arg, 3)
         return i
+
     return raiser
 
 
@@ -108,6 +112,7 @@ def outer_function(inner):
         if i == 3:
             raise OtherError("bar", 3)
         return inner(i)
+
     return outer
 
 
@@ -124,12 +129,13 @@ def raise_runtime_value(arg):
 
 
 class TestRaising(TestCase):
-
     def test_unituple_index_error(self):
         def pyfunc(a, i):
             return a.shape[i]
 
-        cfunc = njit((types.Array(types.int32, 1, 'A'), types.int32),)(pyfunc)
+        cfunc = njit(
+            (types.Array(types.int32, 1, "A"), types.int32),
+        )(pyfunc)
 
         a = np.empty(2, dtype=np.int32)
 
@@ -139,11 +145,15 @@ class TestRaising(TestCase):
             cfunc(a, 2)
         self.assertEqual(str(cm.exception), "tuple index out of range")
 
-    def check_against_python(self, exec_mode, pyfunc, cfunc,
-                             expected_error_class, *args):
-
-        assert exec_mode in (force_pyobj_flags, no_pyobj_flags,
-                             no_pyobj_flags_w_nrt, no_gil_flags)
+    def check_against_python(
+        self, exec_mode, pyfunc, cfunc, expected_error_class, *args
+    ):
+        assert exec_mode in (
+            force_pyobj_flags,
+            no_pyobj_flags,
+            no_pyobj_flags_w_nrt,
+            no_gil_flags,
+        )
 
         # invariant of mode, check the error class and args are the same
         with self.assertRaises(expected_error_class) as pyerr:
@@ -159,7 +169,6 @@ class TestRaising(TestCase):
         # in npm check bottom of traceback matches as frame injection with
         # location info should ensure this
         if exec_mode is no_pyobj_flags:
-
             # we only care about the bottom two frames, the error and the
             # location it was raised.
             try:
@@ -187,8 +196,7 @@ class TestRaising(TestCase):
         self.assertEqual(cfunc(0), 0)
         self.check_against_python(flags, pyfunc, cfunc, MyError, 1)
         self.check_against_python(flags, pyfunc, cfunc, ValueError, 2)
-        self.check_against_python(flags, pyfunc, cfunc,
-                                  np.linalg.linalg.LinAlgError, 3)
+        self.check_against_python(flags, pyfunc, cfunc, np.linalg.linalg.LinAlgError, 3)
 
     def test_raise_class_nopython(self):
         self.check_raise_class(flags=no_pyobj_flags)
@@ -197,16 +205,16 @@ class TestRaising(TestCase):
         self.check_raise_class(flags=force_pyobj_flags)
 
     def check_raise_instance(self, flags):
-        for clazz in [MyError, UDEArgsToSuper,
-                      UDENoArgSuper]:
+        for clazz in [MyError, UDEArgsToSuper, UDENoArgSuper]:
             pyfunc = raise_instance(clazz, "some message")
             cfunc = jit((types.int32,), **flags)(pyfunc)
 
             self.assertEqual(cfunc(0), 0)
             self.check_against_python(flags, pyfunc, cfunc, clazz, 1)
             self.check_against_python(flags, pyfunc, cfunc, ValueError, 2)
-            self.check_against_python(flags, pyfunc, cfunc,
-                                      np.linalg.linalg.LinAlgError, 3)
+            self.check_against_python(
+                flags, pyfunc, cfunc, np.linalg.linalg.LinAlgError, 3
+            )
 
     def test_raise_instance_objmode(self):
         self.check_raise_instance(flags=force_pyobj_flags)
@@ -218,8 +226,7 @@ class TestRaising(TestCase):
         """
         Check exception propagation from nested functions.
         """
-        for clazz in [MyError, UDEArgsToSuper,
-                      UDENoArgSuper]:
+        for clazz in [MyError, UDEArgsToSuper, UDENoArgSuper]:
             inner_pyfunc = raise_instance(clazz, "some message")
             pyfunc = outer_function(inner_pyfunc)
             inner_cfunc = jit(**jit_args)(inner_pyfunc)
@@ -238,24 +245,32 @@ class TestRaising(TestCase):
     def check_reraise(self, flags):
         def raise_exc(exc):
             raise exc
+
         pyfunc = reraise
         cfunc = jit((), **flags)(pyfunc)
-        for op, err in [(lambda : raise_exc(ZeroDivisionError),
-                         ZeroDivisionError),
-                        (lambda : raise_exc(UDEArgsToSuper("msg", 1)),
-                         UDEArgsToSuper),
-                        (lambda : raise_exc(UDENoArgSuper("msg", 1)),
-                         UDENoArgSuper)]:
+        for op, err in [
+            (lambda: raise_exc(ZeroDivisionError), ZeroDivisionError),
+            (lambda: raise_exc(UDEArgsToSuper("msg", 1)), UDEArgsToSuper),
+            (lambda: raise_exc(UDENoArgSuper("msg", 1)), UDENoArgSuper),
+        ]:
+
             def gen_impl(fn):
                 def impl():
                     try:
                         op()
                     except err:
                         fn()
+
                 return impl
+
             pybased = gen_impl(pyfunc)
             cbased = gen_impl(cfunc)
-            self.check_against_python(flags, pybased, cbased, err,)
+            self.check_against_python(
+                flags,
+                pybased,
+                cbased,
+                err,
+            )
 
     def test_reraise_objmode(self):
         self.check_reraise(flags=force_pyobj_flags)
@@ -268,8 +283,7 @@ class TestRaising(TestCase):
         cfunc = jit((types.int32,), **flags)(pyfunc)
         with self.assertRaises(TypeError) as cm:
             cfunc(1)
-        self.assertEqual(str(cm.exception),
-                         "exceptions must derive from BaseException")
+        self.assertEqual(str(cm.exception), "exceptions must derive from BaseException")
 
     def test_raise_invalid_class_objmode(self):
         self.check_raise_invalid_class(int, flags=force_pyobj_flags)
@@ -288,8 +302,8 @@ class TestRaising(TestCase):
         @njit
         def foo():
             raise "illegal"
-        msg = ("Directly raising a string constant as an exception is not "
-               "supported")
+
+        msg = "Directly raising a string constant as an exception is not supported"
         with self.assertRaises(errors.UnsupportedError) as raises:
             foo()
         self.assertIn(msg, str(raises.exception))
@@ -323,8 +337,8 @@ class TestRaising(TestCase):
             test_cases.append((py312_pep695_raise_2, AssertionError))
         for f_text, exc in test_cases:
             loc = {}
-            exec(f_text, {'exc': exc}, loc)
-            pyfunc = loc['f']
+            exec(f_text, {"exc": exc}, loc)
+            pyfunc = loc["f"]
             cfunc = jit((types.int32,), **flags)(pyfunc)
             self.check_against_python(flags, pyfunc, cfunc, exc, 1)
 
@@ -351,7 +365,7 @@ class TestRaising(TestCase):
     def check_raise_runtime_value(self, flags):
         pyfunc = raise_runtime_value
         cfunc = jit((types.string,), **flags)(pyfunc)
-        self.check_against_python(flags, pyfunc, cfunc, ValueError, 'hello')
+        self.check_against_python(flags, pyfunc, cfunc, ValueError, "hello")
 
     def test_raise_runtime_value_objmode(self):
         self.check_raise_runtime_value(flags=force_pyobj_flags)
@@ -363,17 +377,16 @@ class TestRaising(TestCase):
         self.check_raise_runtime_value(flags=no_gil_flags)
 
     def check_raise_instance_with_runtime_args(self, flags):
-        for clazz in [MyError, UDEArgsToSuper,
-                      UDENoArgSuper]:
+        for clazz in [MyError, UDEArgsToSuper, UDENoArgSuper]:
             pyfunc = raise_instance_runtime_args(clazz)
             cfunc = jit((types.int32, types.string), **flags)(pyfunc)
 
-            self.assertEqual(cfunc(0, 'test'), 0)
-            self.check_against_python(flags, pyfunc, cfunc, clazz, 1, 'hello')
-            self.check_against_python(flags, pyfunc, cfunc, ValueError, 2,
-                                      'world')
-            self.check_against_python(flags, pyfunc, cfunc,
-                                      np.linalg.linalg.LinAlgError, 3, 'linalg')
+            self.assertEqual(cfunc(0, "test"), 0)
+            self.check_against_python(flags, pyfunc, cfunc, clazz, 1, "hello")
+            self.check_against_python(flags, pyfunc, cfunc, ValueError, 2, "world")
+            self.check_against_python(
+                flags, pyfunc, cfunc, np.linalg.linalg.LinAlgError, 3, "linalg"
+            )
 
     def test_raise_instance_with_runtime_args_objmode(self):
         self.check_raise_instance_with_runtime_args(flags=force_pyobj_flags)
@@ -386,7 +399,7 @@ class TestRaising(TestCase):
 
     def test_dynamic_raise_bad_args(self):
         def raise_literal_dict():
-            raise ValueError({'a': 1, 'b': np.ones(4)})
+            raise ValueError({"a": 1, "b": np.ones(4)})
 
         def raise_range():
             raise ValueError(range(3))
@@ -401,14 +414,14 @@ class TestRaising(TestCase):
         ]
 
         for pyfunc, argtypes in funcs:
-            msg = '.*Cannot convert native .* to a Python object.*'
+            msg = ".*Cannot convert native .* to a Python object.*"
             with self.assertRaisesRegex(errors.TypingError, msg):
                 njit(argtypes)(pyfunc)
 
     def test_dynamic_raise_dict(self):
         @njit
         def raise_literal_dict2():
-            raise ValueError({'a': 1, 'b': 3})
+            raise ValueError({"a": 1, "b": 3})
 
         msg = "{a: 1, b: 3}"
         with self.assertRaisesRegex(ValueError, msg):
@@ -419,12 +432,11 @@ class TestRaising(TestCase):
         def raise_with_no_nrt(i):
             raise ValueError(i)
 
-        msg = 'NRT required but not enabled'
+        msg = "NRT required but not enabled"
         with self.assertRaisesRegex(errors.NumbaRuntimeError, msg):
             raise_with_no_nrt(123)
 
     def test_try_raise(self):
-
         @njit
         def raise_(a):
             raise ValueError(a)
@@ -443,7 +455,6 @@ class TestRaising(TestCase):
     @expected_failure_py312
     @expected_failure_py313
     def test_dynamic_raise(self):
-
         @njit
         def raise_(a):
             raise ValueError(a)
@@ -458,7 +469,7 @@ class TestRaising(TestCase):
         args = [
             1,
             1.1,
-            'hello',
+            "hello",
             np.ones(3),
             [1, 2],
             (1, 2),
@@ -471,5 +482,5 @@ class TestRaising(TestCase):
                 self.assertEqual((arg,), e.exception.args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

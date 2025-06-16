@@ -12,12 +12,16 @@ import unittest
 
 
 def generate_standard_dot_case():
-
-    @jit((types.float32[::1], types.float32[::1],))
+    @jit(
+        (
+            types.float32[::1],
+            types.float32[::1],
+        )
+    )
     def dot(a, b):
         sum = 0
         for i in range(len(a)):
-            sum += a[i]*b[i]
+            sum += a[i] * b[i]
         return sum
 
     dot._enable_sysmon = True
@@ -25,13 +29,17 @@ def generate_standard_dot_case():
 
 
 def generate_raising_dot_case():
-
-    @jit((types.float32[::1], types.float32[::1],))
+    @jit(
+        (
+            types.float32[::1],
+            types.float32[::1],
+        )
+    )
     def raising_dot(a, b):
         # this is like dot above, it does all the work, but the raises
         sum = 0
         for i in range(len(a)):
-            sum += a[i]*b[i]
+            sum += a[i] * b[i]
         raise ValueError("problem with dot")
 
     raising_dot._enable_sysmon = True
@@ -50,7 +58,6 @@ def np_dot(a, b):
 
 
 class TestProfiler(unittest.TestCase):
-
     def check_profiler_dot(self, caller, cfunc):
         """
         Make sure the jit-compiled function shows up in the profile stats
@@ -69,10 +76,11 @@ class TestProfiler(unittest.TestCase):
         stats = pstats.Stats(p).strip_dirs()
 
         def check_stats_for_key(stats, code, n_calls):
-            expected_key = (os.path.basename(code.co_filename),
-                            code.co_firstlineno,
-                            code.co_name,
-                            )
+            expected_key = (
+                os.path.basename(code.co_filename),
+                code.co_firstlineno,
+                code.co_name,
+            )
             # check the key is in the stats
             self.assertIn(expected_key, stats.stats)
             # check that call for the key has been made `n_calls` times.
@@ -138,5 +146,6 @@ class TestProfiler(unittest.TestCase):
             """
         subprocess.check_call([sys.executable, "-c", code])
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

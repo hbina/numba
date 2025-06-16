@@ -2,7 +2,6 @@
 Caching mechanism for compiled functions.
 """
 
-
 from abc import ABCMeta, abstractmethod
 import contextlib
 import errno
@@ -36,7 +35,6 @@ def _cache_log(msg, *args):
 
 
 class _Cache(metaclass=ABCMeta):
-
     @property
     @abstractmethod
     def cache_path(self):
@@ -152,7 +150,7 @@ class _CacheLocator(metaclass=ABCMeta):
         # Note: windows doesn't like long path.
         hashed = hashlib.sha1(subpath.encode()).hexdigest()
         # Retain parent directory name for easier debugging
-        return '_'.join([parentdir, hashed])
+        return "_".join([parentdir, hashed])
 
 
 class _SourceFileBackedLocatorMixin(object):
@@ -162,7 +160,7 @@ class _SourceFileBackedLocatorMixin(object):
     """
 
     def get_source_stamp(self):
-        if getattr(sys, 'frozen', False):
+        if getattr(sys, "frozen", False):
             st = os.stat(sys.executable)
         else:
             st = os.stat(self._py_file)
@@ -192,6 +190,7 @@ class _UserProvidedCacheLocator(_SourceFileBackedLocatorMixin, _CacheLocator):
     A locator that always point to the user provided directory in
     `numba.config.CACHE_DIR`
     """
+
     def __init__(self, py_func, py_file):
         self._py_file = py_file
         self._lineno = py_func.__code__.co_firstlineno
@@ -218,7 +217,7 @@ class _InTreeCacheLocator(_SourceFileBackedLocatorMixin, _CacheLocator):
     def __init__(self, py_func, py_file):
         self._py_file = py_file
         self._lineno = py_func.__code__.co_firstlineno
-        self._cache_path = os.path.join(os.path.dirname(self._py_file), '__pycache__')
+        self._cache_path = os.path.join(os.path.dirname(self._py_file), "__pycache__")
 
     def get_cache_path(self):
         return self._cache_path
@@ -243,7 +242,7 @@ class _UserWideCacheLocator(_SourceFileBackedLocatorMixin, _CacheLocator):
 
     @classmethod
     def from_function(cls, py_func, py_file):
-        if not (os.path.exists(py_file) or getattr(sys, 'frozen', False)):
+        if not (os.path.exists(py_file) or getattr(sys, "frozen", False)):
             # Perhaps a placeholder (e.g. "<ipython-XXX>")
             # stop function exit if frozen, since it uses a temp placeholder
             return
@@ -269,7 +268,7 @@ class _IPythonCacheLocator(_CacheLocator):
         if isinstance(source, bytes):
             self._bytes_source = source
         else:
-            self._bytes_source = source.encode('utf-8')
+            self._bytes_source = source.encode("utf-8")
 
     def get_cache_path(self):
         # We could also use jupyter_core.paths.jupyter_runtime_dir()
@@ -281,7 +280,7 @@ class _IPythonCacheLocator(_CacheLocator):
         except ImportError:
             # older IPython version
             from IPython.utils.path import get_ipython_cache_dir
-        return os.path.join(get_ipython_cache_dir(), 'numba_cache')
+        return os.path.join(get_ipython_cache_dir(), "numba_cache")
 
     def get_source_stamp(self):
         return hashlib.sha256(self._bytes_source).hexdigest()
@@ -292,7 +291,7 @@ class _IPythonCacheLocator(_CacheLocator):
         # for the cache, so we hash the first two lines of the function
         # source (usually this will be the @jit decorator + the function
         # signature).
-        firstlines = b''.join(self._bytes_source.splitlines(True)[:2])
+        firstlines = b"".join(self._bytes_source.splitlines(True)[:2])
         return hashlib.sha256(firstlines).hexdigest()[:10]
 
     @classmethod
@@ -351,6 +350,7 @@ class _ZipCacheLocator(_SourceFileBackedLocatorMixin, _CacheLocator):
             return None
         return cls(py_func, py_file)
 
+
 class CacheImpl(metaclass=ABCMeta):
     """
     Provides the core machinery for caching.
@@ -381,24 +381,31 @@ class CacheImpl(metaclass=ABCMeta):
             if locator is not None:
                 break
         else:
-            raise RuntimeError("cannot cache function %r: no locator available "
-                               "for file %r" % (qualname, source_path))
+            raise RuntimeError(
+                "cannot cache function %r: no locator available "
+                "for file %r" % (qualname, source_path)
+            )
         self._locator = locator
         # Use filename base name as module name to avoid conflict between
         # foo/__init__.py and foo/foo.py
         filename = inspect.getfile(py_func)
         modname = os.path.splitext(os.path.basename(filename))[0]
         fullname = "%s.%s" % (modname, qualname)
-        abiflags = getattr(sys, 'abiflags', '')
+        abiflags = getattr(sys, "abiflags", "")
         self._filename_base = self.get_filename_base(fullname, abiflags)
 
     def get_filename_base(self, fullname, abiflags):
         # '<' and '>' can appear in the qualname (e.g. '<locals>') but
         # are forbidden in Windows filenames
-        fixed_fullname = fullname.replace('<', '').replace('>', '')
-        fmt = '%s-%s.py%d%d%s'
-        return fmt % (fixed_fullname, self.locator.get_disambiguator(),
-                      sys.version_info[0], sys.version_info[1], abiflags)
+        fixed_fullname = fullname.replace("<", "").replace(">", "")
+        fmt = "%s-%s.py%d%d%s"
+        return fmt % (
+            fixed_fullname,
+            self.locator.get_disambiguator(),
+            sys.version_info[0],
+            sys.version_info[1],
+            abiflags,
+        )
 
     @property
     def filename_base(self):
@@ -449,13 +456,18 @@ class CompileResultCacheImpl(CacheImpl):
         if any(not x.can_cache for x in cres.lifted):
             cannot_cache = "as it uses lifted code"
         elif cres.library.has_dynamic_globals:
-            cannot_cache = ("as it uses dynamic globals "
-                            "(such as ctypes pointers and large global arrays)")
+            cannot_cache = (
+                "as it uses dynamic globals "
+                "(such as ctypes pointers and large global arrays)"
+            )
         if cannot_cache:
-            msg = ('Cannot cache compiled function "%s" %s'
-                   % (cres.fndesc.qualname.split('.')[-1], cannot_cache))
-            warnings.warn_explicit(msg, NumbaWarning,
-                                   self._locator._py_file, self._lineno)
+            msg = 'Cannot cache compiled function "%s" %s' % (
+                cres.fndesc.qualname.split(".")[-1],
+                cannot_cache,
+            )
+            warnings.warn_explicit(
+                msg, NumbaWarning, self._locator._py_file, self._lineno
+            )
             return False
         return True
 
@@ -488,18 +500,19 @@ class CodeLibraryCacheImpl(CacheImpl):
     def get_filename_base(self, fullname, abiflags):
         parent = super(CodeLibraryCacheImpl, self)
         res = parent.get_filename_base(fullname, abiflags)
-        return '-'.join([self._filename_prefix, res])
+        return "-".join([self._filename_prefix, res])
 
 
 class IndexDataCacheFile(object):
     """
     Implements the logic for the index file and data file used by a cache.
     """
+
     def __init__(self, cache_path, filename_base, source_stamp):
         self._cache_path = cache_path
-        self._index_name = '%s.nbi' % (filename_base,)
+        self._index_name = "%s.nbi" % (filename_base,)
         self._index_path = os.path.join(self._cache_path, self._index_name)
-        self._data_name_pattern = '%s.{number:d}.nbc' % (filename_base,)
+        self._data_name_pattern = "%s.{number:d}.nbc" % (filename_base,)
         self._source_stamp = source_stamp
         self._version = numba.__version__
 
@@ -603,7 +616,7 @@ class IndexDataCacheFile(object):
         uuid4 is used to try and avoid name collisions on a shared filesystem.
         """
         uid = uuid.uuid4().hex[:16]  # avoid long paths
-        tmpname = '%s.tmp.%s' % (filepath, uid)
+        tmpname = "%s.tmp.%s" % (filepath, uid)
         try:
             with open(tmpname, "wb") as f:
                 yield f
@@ -650,9 +663,11 @@ class Cache(_Cache):
         # This may be a bit strict but avoids us maintaining a magic number
         source_stamp = self._impl.locator.get_source_stamp()
         filename_base = self._impl.filename_base
-        self._cache_file = IndexDataCacheFile(cache_path=self._cache_path,
-                                              filename_base=filename_base,
-                                              source_stamp=source_stamp)
+        self._cache_file = IndexDataCacheFile(
+            cache_path=self._cache_path,
+            filename_base=filename_base,
+            source_stamp=source_stamp,
+        )
         self.enable()
 
     def __repr__(self):
@@ -710,7 +725,7 @@ class Cache(_Cache):
 
     @contextlib.contextmanager
     def _guard_against_spurious_io_errors(self):
-        if os.name == 'nt':
+        if os.name == "nt":
             # Guard against permission errors due to accessing the file
             # from several processes (see #2028)
             try:
@@ -736,22 +751,29 @@ class Cache(_Cache):
             #       on how the process is launched; e.g. multiprocessing.Process
             cvarbytes = dumps(cvars)
         else:
-            cvarbytes = b''
+            cvarbytes = b""
 
         hasher = lambda x: hashlib.sha256(x).hexdigest()
-        return (sig, codegen.magic_tuple(), (hasher(codebytes),
-                                             hasher(cvarbytes),))
+        return (
+            sig,
+            codegen.magic_tuple(),
+            (
+                hasher(codebytes),
+                hasher(cvarbytes),
+            ),
+        )
 
 
 class FunctionCache(Cache):
     """
     Implements Cache that saves and loads CompileResult objects.
     """
+
     _impl_class = CompileResultCacheImpl
 
 
 # Remember used cache filename prefixes.
-_lib_cache_prefixes = set([''])
+_lib_cache_prefixes = set([""])
 
 
 def make_library_cache(prefix):
@@ -772,7 +794,7 @@ def make_library_cache(prefix):
         Implements Cache that saves and loads CodeLibrary objects for additional
         feature for the specified python function.
         """
+
         _impl_class = CustomCodeLibraryCacheImpl
 
     return LibraryCache
-

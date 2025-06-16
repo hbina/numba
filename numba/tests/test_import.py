@@ -13,22 +13,22 @@ class TestNumbaImport(TestCase):
         Importing top-level numba features should not import too many modules.
         """
         # A heuristic set of modules that shouldn't be imported immediately
-        banlist = ['cffi',
-                   'distutils',
-                   'numba.cuda',
-                   'numba.cpython.mathimpl',
-                   'numba.cpython.randomimpl',
-                   'numba.tests',
-                   'numba.core.typing.collections',
-                   'numba.core.typing.listdecl',
-                   'numba.core.typing.npdatetime',
-                   ]
+        banlist = [
+            "cffi",
+            "distutils",
+            "numba.cuda",
+            "numba.cpython.mathimpl",
+            "numba.cpython.randomimpl",
+            "numba.tests",
+            "numba.core.typing.collections",
+            "numba.core.typing.listdecl",
+            "numba.core.typing.npdatetime",
+        ]
 
         # Sanity check the modules still exist...
         for mod in banlist:
-            distutils_check = (mod != 'distutils' or
-                               utils.PYVERSION < (3, 12))
-            if mod not in ('cffi',) and distutils_check:
+            distutils_check = mod != "distutils" or utils.PYVERSION < (3, 12)
+            if mod not in ("cffi",) and distutils_check:
                 __import__(mod)
 
         code = """if 1:
@@ -51,30 +51,32 @@ class TestNumbaImport(TestCase):
         """
         # None of these modules should be imported through the process of
         # doing 'import numba' or 'from numba import njit'
-        banlist = ['numba.cpython.slicing',
-                   'numba.cpython.tupleobj',
-                   'numba.cpython.enumimpl',
-                   'numba.cpython.hashing',
-                   'numba.cpython.heapq',
-                   'numba.cpython.iterators',
-                   'numba.cpython.numbers',
-                   'numba.cpython.rangeobj',
-                   'numba.cpython.cmathimpl',
-                   'numba.cpython.mathimpl',
-                   'numba.cpython.printimpl',
-                   'numba.cpython.randomimpl',
-                   'numba.core.optional',
-                   'numba.misc.gdb_hook',
-                   'numba.misc.literal',
-                   'numba.misc.cffiimpl',
-                   'numba.np.linalg',
-                   'numba.np.polynomial',
-                   'numba.np.arraymath',
-                   'numba.np.npdatetime',
-                   'numba.np.npyimpl',
-                   'numba.typed.typeddict',
-                   'numba.typed.typedlist',
-                   'numba.experimental.jitclass.base',]
+        banlist = [
+            "numba.cpython.slicing",
+            "numba.cpython.tupleobj",
+            "numba.cpython.enumimpl",
+            "numba.cpython.hashing",
+            "numba.cpython.heapq",
+            "numba.cpython.iterators",
+            "numba.cpython.numbers",
+            "numba.cpython.rangeobj",
+            "numba.cpython.cmathimpl",
+            "numba.cpython.mathimpl",
+            "numba.cpython.printimpl",
+            "numba.cpython.randomimpl",
+            "numba.core.optional",
+            "numba.misc.gdb_hook",
+            "numba.misc.literal",
+            "numba.misc.cffiimpl",
+            "numba.np.linalg",
+            "numba.np.polynomial",
+            "numba.np.arraymath",
+            "numba.np.npdatetime",
+            "numba.np.npyimpl",
+            "numba.typed.typeddict",
+            "numba.typed.typedlist",
+            "numba.experimental.jitclass.base",
+        ]
 
         code1 = """if 1:
             import sys
@@ -112,5 +114,5 @@ class TestNumbaImport(TestCase):
         run_in_subprocess(code)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

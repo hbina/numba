@@ -39,7 +39,6 @@ def array_of_object(x):
 
 
 class TestObjectMode(TestCase):
-
     def test_complex_constant(self):
         pyfunc = complex_constant
         cfunc = jit((), forceobj=True)(pyfunc)
@@ -77,6 +76,7 @@ class TestObjectMode(TestCase):
         """
         Test handling of the `in` comparison
         """
+
         @jit(forceobj=True)
         def foo(x, y):
             return x in y
@@ -138,6 +138,7 @@ class TestObjectModeInvalidRewrite(TestCase):
         Test code based on user submitted issue at
         https://github.com/numba/numba/issues/2159
         """
+
         def test0(n):
             return n
 
@@ -166,7 +167,7 @@ class TestObjectModeInvalidRewrite(TestCase):
             # static setitem here will fail in objmode if the IR is modified by
             # rewrite pass
             a2[0] = 1
-            return test0(a1.sum() + a2.sum())   # trigger objmode fallback
+            return test0(a1.sum() + a2.sum())  # trigger objmode fallback
 
         compiled = jit(forceobj=True)(test)
         args = np.array([3]), np.array([4])
@@ -180,9 +181,9 @@ class TestObjectModeInvalidRewrite(TestCase):
         func_text = "def func():\n"
         func_text += "    np.array([1,2,3])\n"
         loc_vars = {}
-        custom_globals = {'np': np}
+        custom_globals = {"np": np}
         exec(func_text, custom_globals, loc_vars)
-        func = loc_vars['func']
+        func = loc_vars["func"]
         jitted = jit(forceobj=True)(func)
         jitted()
 
@@ -191,8 +192,9 @@ class TestObjectModeInvalidRewrite(TestCase):
         # this should compile via fallback
         @jit(forceobj=True)
         def f():
-            for _ in (): # cannot lift this loop as a nopython loop
+            for _ in ():  # cannot lift this loop as a nopython loop
                 [0 for k in (None,)]
+
         f()
         self._ensure_objmode(f)
         lifted = f.overloads[f.signatures[0]].lifted[0]
@@ -200,5 +202,5 @@ class TestObjectModeInvalidRewrite(TestCase):
         self.assertEqual(lifted.signatures, [(types.Tuple(()),)])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

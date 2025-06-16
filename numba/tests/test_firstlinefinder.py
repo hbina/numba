@@ -27,7 +27,7 @@ class TestFirstLineFinder(TestCase):
     def test_decorated_odd_comment_indent(self):
         @njit
         def foo():
-# NOTE: THIS COMMENT MUST START AT COLUMN 0 FOR THIS SAMPLE CODE TO BE VALID # noqa: E115, E501
+            # NOTE: THIS COMMENT MUST START AT COLUMN 0 FOR THIS SAMPLE CODE TO BE VALID # noqa: E115, E501
             return 1
 
         first_def_line = get_func_body_first_lineno(foo)
@@ -35,7 +35,7 @@ class TestFirstLineFinder(TestCase):
 
     def test_undecorated_odd_comment_indent(self):
         def foo():
-# NOTE: THIS COMMENT MUST START AT COLUMN 0 FOR THIS SAMPLE CODE TO BE VALID # noqa: E115, E501
+            # NOTE: THIS COMMENT MUST START AT COLUMN 0 FOR THIS SAMPLE CODE TO BE VALID # noqa: E115, E501
             return 1
 
         first_def_line = get_func_body_first_lineno(njit(foo))
@@ -75,14 +75,15 @@ class TestFirstLineFinder(TestCase):
 
         globalns = {}
         exec(source, globalns)
-        foo = globalns['foo']
+        foo = globalns["foo"]
 
         first_def_line = get_func_body_first_lineno(foo)
         # Cannot determine first line of string evaled functions
         self.assertIsNone(first_def_line)
 
-    def _test_with_patched_linecache(self, filename, source,
-                                     function_name, expected_first_line):
+    def _test_with_patched_linecache(
+        self, filename, source, function_name, expected_first_line
+    ):
         # Modify the line cache in a similar manner to Jupyter, so that
         # get_func_body_first_lineno can find the code using the fallback to
         # inspect.getsourcelines()
@@ -111,8 +112,9 @@ class TestFirstLineFinder(TestCase):
         filename = "<foo-basic>"
         function_name = "foo"
         expected_first_line = 2
-        self._test_with_patched_linecache(filename, source, function_name,
-                                          expected_first_line)
+        self._test_with_patched_linecache(
+            filename, source, function_name, expected_first_line
+        )
 
     def test_string_eval_linecache_indent(self):
         source = """if True:
@@ -125,8 +127,9 @@ class TestFirstLineFinder(TestCase):
         filename = "<foo-indent>"
         function_name = "foo"
         expected_first_line = 5
-        self._test_with_patched_linecache(filename, source, function_name,
-                                          expected_first_line)
+        self._test_with_patched_linecache(
+            filename, source, function_name, expected_first_line
+        )
 
     def test_string_eval_linecache_closure(self):
         source = textwrap.dedent("""
@@ -141,8 +144,9 @@ class TestFirstLineFinder(TestCase):
         filename = "<foo-gen>"
         function_name = "generated_foo"
         expected_first_line = 4
-        self._test_with_patched_linecache(filename, source, function_name,
-                                          expected_first_line)
+        self._test_with_patched_linecache(
+            filename, source, function_name, expected_first_line
+        )
 
     def test_string_eval_linecache_stacked_decorators(self):
         source = textwrap.dedent("""
@@ -159,8 +163,9 @@ class TestFirstLineFinder(TestCase):
         filename = "<foo-stacked-decorator>"
         function_name = "decorated"
         expected_first_line = 9
-        self._test_with_patched_linecache(filename, source, function_name,
-                                          expected_first_line)
+        self._test_with_patched_linecache(
+            filename, source, function_name, expected_first_line
+        )
 
     def test_string_eval_linecache_all(self):
         # A test combining indented code, a closure, and stacked decorators
@@ -183,12 +188,14 @@ class TestFirstLineFinder(TestCase):
         filename = "<foo-all>"
         function_name = "foo_all"
         expected_first_line = 10
-        self._test_with_patched_linecache(filename, source, function_name,
-                                          expected_first_line)
+        self._test_with_patched_linecache(
+            filename, source, function_name, expected_first_line
+        )
 
     def test_single_line_function(self):
         @njit
-        def foo(): pass   # noqa: E704
+        def foo():
+            pass  # noqa: E704
 
         first_def_line = get_func_body_first_lineno(foo)
         self.assert_line_location(first_def_line, 2)
@@ -196,8 +203,7 @@ class TestFirstLineFinder(TestCase):
     def test_docstring(self):
         @njit
         def foo():
-            """Docstring
-            """
+            """Docstring"""
             pass
 
         first_def_line = get_func_body_first_lineno(foo)
@@ -206,11 +212,11 @@ class TestFirstLineFinder(TestCase):
     def test_docstring_2(self):
         @njit
         def foo():
-            """Docstring
-            """
+            """Docstring"""
             """Not Docstring, but a bare string literal
             """
             pass
+
         # Variation on test_docstring but with a "fake" docstring following
         # the true docstring.
         first_def_line = get_func_body_first_lineno(foo)

@@ -2,7 +2,6 @@
 Tests issues or edge cases for producing invalid NRT refct
 """
 
-
 import gc
 
 import numpy as np
@@ -14,7 +13,6 @@ from numba.tests.support import TestCase, EnableNRTStatsMixin
 
 
 class TestNrtRefCt(EnableNRTStatsMixin, TestCase):
-
     def setUp(self):
         # Clean up any NRT-backed objects hanging in a dead reference cycle
         gc.collect()
@@ -45,7 +43,6 @@ class TestNrtRefCt(EnableNRTStatsMixin, TestCase):
 
         @njit
         def g(n):
-
             x = np.zeros((n, 2))
 
             for i in range(n):
@@ -66,6 +63,7 @@ class TestNrtRefCt(EnableNRTStatsMixin, TestCase):
         """
         Test issue #1573
         """
+
         @njit
         def if_with_allocation_and_initialization(arr1, test1):
             tmp_arr = np.zeros_like(arr1)
@@ -83,13 +81,15 @@ class TestNrtRefCt(EnableNRTStatsMixin, TestCase):
         init_stats = rtsys.get_allocation_stats()
         if_with_allocation_and_initialization(arr, False)
         cur_stats = rtsys.get_allocation_stats()
-        self.assertEqual(cur_stats.alloc - init_stats.alloc,
-                         cur_stats.free - init_stats.free)
+        self.assertEqual(
+            cur_stats.alloc - init_stats.alloc, cur_stats.free - init_stats.free
+        )
 
     def test_del_at_beginning_of_loop(self):
         """
         Test issue #1734
         """
+
         @njit
         def f(arr):
             res = 0
@@ -107,9 +107,10 @@ class TestNrtRefCt(EnableNRTStatsMixin, TestCase):
         init_stats = rtsys.get_allocation_stats()
         f(arr)
         cur_stats = rtsys.get_allocation_stats()
-        self.assertEqual(cur_stats.alloc - init_stats.alloc,
-                         cur_stats.free - init_stats.free)
+        self.assertEqual(
+            cur_stats.alloc - init_stats.alloc, cur_stats.free - init_stats.free
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

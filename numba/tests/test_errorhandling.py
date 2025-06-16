@@ -9,31 +9,42 @@ import warnings
 from numba import jit, njit, types
 from numba.core import errors
 from numba.experimental import structref
-from numba.extending import (overload, intrinsic, overload_method,
-                             overload_attribute)
+from numba.extending import overload, intrinsic, overload_method, overload_attribute
 from numba.core.compiler import CompilerBase
-from numba.core.untyped_passes import (TranslateByteCode, FixupArgs,
-                                       IRProcessing,)
-from numba.core.typed_passes import (NopythonTypeInference, DeadCodeElimination,
-                                     NoPythonBackend, NativeLowering)
+from numba.core.untyped_passes import (
+    TranslateByteCode,
+    FixupArgs,
+    IRProcessing,
+)
+from numba.core.typed_passes import (
+    NopythonTypeInference,
+    DeadCodeElimination,
+    NoPythonBackend,
+    NativeLowering,
+)
 from numba.core.compiler_machinery import PassManager
 from numba.core.types.functions import _err_reasons as error_reasons
 
-from numba.tests.support import (skip_parfors_unsupported, override_config,
-                                 SerialMixin, skip_unless_cffi,
-                                 skip_unless_scipy, TestCase)
+from numba.tests.support import (
+    skip_parfors_unsupported,
+    override_config,
+    SerialMixin,
+    skip_unless_cffi,
+    skip_unless_scipy,
+    TestCase,
+)
 import unittest
 
 
 class TestErrorHandlingBeforeLowering(unittest.TestCase):
-
     def test_unsupported_make_function_return_inner_func(self):
         def func(x):
-            """ return the closure """
+            """return the closure"""
             z = x + 1
 
             def inner(x):
                 return x + z
+
             return inner
 
         for pipeline in jit, njit:
@@ -45,12 +56,11 @@ class TestErrorHandlingBeforeLowering(unittest.TestCase):
 
 
 class TestUnsupportedReporting(unittest.TestCase):
-
     def test_unsupported_numpy_function(self):
         # np.asanyarray(list) currently unsupported
         @njit
         def func():
-            np.asanyarray([1,2,3])
+            np.asanyarray([1, 2, 3])
 
         with self.assertRaises(errors.TypingError) as raises:
             func()
@@ -60,7 +70,6 @@ class TestUnsupportedReporting(unittest.TestCase):
 
 
 class TestMiscErrorHandling(unittest.TestCase):
-
     def test_use_of_exception_for_flow_control(self):
         # constant inference uses exceptions with no Loc specified to determine
         # flow control, this asserts that the construction of the lowering
@@ -70,8 +79,8 @@ class TestMiscErrorHandling(unittest.TestCase):
         def fn(x):
             return 10**x
 
-        a = np.array([1.0],dtype=np.float64)
-        fn(a) # should not raise
+        a = np.array([1.0], dtype=np.float64)
+        fn(a)  # should not raise
 
     def test_commented_func_definition_is_not_a_definition(self):
         # See issue #4056, the commented def should not be found as the
@@ -80,12 +89,12 @@ class TestMiscErrorHandling(unittest.TestCase):
         # cause this issue hence is tested.
 
         def foo_commented():
-            #def commented_definition()
-            raise Exception('test_string')
+            # def commented_definition()
+            raise Exception("test_string")
 
         def foo_docstring():
-            """ def docstring containing def might match function definition!"""
-            raise Exception('test_string')
+            """def docstring containing def might match function definition!"""
+            raise Exception("test_string")
 
         for func in (foo_commented, foo_docstring):
             with self.assertRaises(Exception) as raises:
@@ -97,7 +106,7 @@ class TestMiscErrorHandling(unittest.TestCase):
         # for context see # 3390
         class TestPipeline(CompilerBase):
             def define_pipelines(self):
-                name = 'bad_DCE_pipeline'
+                name = "bad_DCE_pipeline"
                 pm = PassManager(name)
                 pm.add_pass(TranslateByteCode, "analyzing bytecode")
                 pm.add_pass(FixupArgs, "fix up args")
@@ -117,7 +126,7 @@ class TestMiscErrorHandling(unittest.TestCase):
             return 0
 
         with self.assertRaises(errors.TypingError) as raises:
-            f(iter([1,2]))  # use a type that Numba doesn't recognize
+            f(iter([1, 2]))  # use a type that Numba doesn't recognize
 
         expected = 'File "unknown location", line 0:'
         self.assertIn(expected, str(raises.exception))
@@ -132,24 +141,25 @@ class TestMiscErrorHandling(unittest.TestCase):
 
     def test_handling_of_write_to_reflected_global(self):
         from numba.tests.errorhandling_usecases import global_reflected_write
+
         self.check_write_to_globals(njit(global_reflected_write))
 
     def test_handling_of_write_to_typed_dict_global(self):
         from numba.tests.errorhandling_usecases import global_dict_write
+
         self.check_write_to_globals(njit(global_dict_write))
 
     @skip_parfors_unsupported
     def test_handling_forgotten_numba_internal_import(self):
         @njit(parallel=True)
         def foo():
-            for i in prange(10): # noqa: F821 prange is not imported
+            for i in prange(10):  # noqa: F821 prange is not imported
                 pass
 
         with self.assertRaises(errors.TypingError) as raises:
             foo()
 
-        expected = ("'prange' looks like a Numba internal function, "
-                    "has it been imported")
+        expected = "'prange' looks like a Numba internal function, has it been imported"
         self.assertIn(expected, str(raises.exception))
 
     def test_handling_unsupported_generator_expression(self):
@@ -166,7 +176,7 @@ class TestMiscErrorHandling(unittest.TestCase):
     def test_handling_undefined_variable(self):
         @njit
         def foo():
-            return a # noqa: F821
+            return a  # noqa: F821
 
         expected = "NameError: name 'a' is not defined"
 
@@ -176,9 +186,7 @@ class TestMiscErrorHandling(unittest.TestCase):
 
 
 class TestErrorMessages(unittest.TestCase):
-
     def test_specific_error(self):
-
         given_reason = "specific_reason"
 
         def foo():
@@ -196,17 +204,16 @@ class TestErrorMessages(unittest.TestCase):
             call_foo()
 
         excstr = str(raises.exception)
-        self.assertIn(error_reasons['specific_error'].splitlines()[0], excstr)
+        self.assertIn(error_reasons["specific_error"].splitlines()[0], excstr)
         self.assertIn(given_reason, excstr)
 
     def test_no_match_error(self):
-
         def foo():
             pass
 
         @overload(foo)
         def ol_foo():
-            return None # emulate no impl available for type
+            return None  # emulate no impl available for type
 
         @njit
         def call_foo():
@@ -220,7 +227,7 @@ class TestErrorMessages(unittest.TestCase):
 
     @skip_unless_scipy
     def test_error_function_source_is_correct(self):
-        """ Checks that the reported source location for an overload is the
+        """Checks that the reported source location for an overload is the
         overload implementation source, not the actual function source from the
         target library."""
 
@@ -232,7 +239,7 @@ class TestErrorMessages(unittest.TestCase):
             foo()
 
         excstr = str(raises.exception)
-        self.assertIn(error_reasons['specific_error'].splitlines()[0], excstr)
+        self.assertIn(error_reasons["specific_error"].splitlines()[0], excstr)
         expected_file = os.path.join("numba", "np", "linalg.py")
         expected = f"Overload in function 'svd_impl': File: {expected_file}:"
         self.assertIn(expected.format(expected_file), excstr)
@@ -241,7 +248,7 @@ class TestErrorMessages(unittest.TestCase):
         # hits ConcreteTemplate
         @njit
         def foo():
-            return 'a' + 1
+            return "a" + 1
 
         with self.assertRaises(errors.TypingError) as raises:
             foo()
@@ -275,8 +282,7 @@ class TestErrorMessages(unittest.TestCase):
             foo()
 
         excstr = str(raises.exception)
-        self.assertIn("No implementation of function Function(<function angle",
-                      excstr)
+        self.assertIn("No implementation of function Function(<function angle", excstr)
 
     def test_overloadfunction_template_source(self):
         # hits _OverloadFunctionTemplate
@@ -298,8 +304,7 @@ class TestErrorMessages(unittest.TestCase):
         # there will not be "numerous" matched templates, there's just one,
         # the one above, so assert it is reported
         self.assertNotIn("<numerous>", excstr)
-        expected_file = os.path.join("numba", "tests",
-                                     "test_errorhandling.py")
+        expected_file = os.path.join("numba", "tests", "test_errorhandling.py")
         expected_ol = f"Overload of function 'bar': File: {expected_file}:"
         self.assertIn(expected_ol.format(expected_file), excstr)
         self.assertIn("No match.", excstr)
@@ -321,6 +326,7 @@ class TestErrorMessages(unittest.TestCase):
 
             def codegen(context, builder, signature, args):
                 pass
+
             return sig, codegen
 
         @njit
@@ -332,7 +338,7 @@ class TestErrorMessages(unittest.TestCase):
             call_intrin()
 
         excstr = str(raises.exception)
-        self.assertIn(error_reasons['specific_error'].splitlines()[0], excstr)
+        self.assertIn(error_reasons["specific_error"].splitlines()[0], excstr)
         self.assertIn(given_reason1, excstr)
         self.assertIn(given_reason2, excstr)
         self.assertIn("Intrinsic in function", excstr)
@@ -340,7 +346,7 @@ class TestErrorMessages(unittest.TestCase):
     def test_overloadmethod_template_source(self):
         # doesn't hit _OverloadMethodTemplate for source as it's a nested
         # exception
-        @overload_method(types.UnicodeType, 'isnonsense')
+        @overload_method(types.UnicodeType, "isnonsense")
         def ol_unicode_isnonsense(self):
             pass
 
@@ -357,7 +363,7 @@ class TestErrorMessages(unittest.TestCase):
     def test_overloadattribute_template_source(self):
         # doesn't hit _OverloadMethodTemplate for source as it's a nested
         # exception
-        @overload_attribute(types.UnicodeType, 'isnonsense')
+        @overload_attribute(types.UnicodeType, "isnonsense")
         def ol_unicode_isnonsense(self):
             pass
 
@@ -376,7 +382,7 @@ class TestErrorMessages(unittest.TestCase):
 
         @njit
         def foo():
-            c_cos('a')
+            c_cos("a")
 
         with self.assertRaises(errors.TypingError) as raises:
             foo()
@@ -387,12 +393,13 @@ class TestErrorMessages(unittest.TestCase):
     @skip_unless_cffi
     def test_cffi_function_pointer_template_source(self):
         from numba.tests import cffi_usecases as mod
+
         mod.init()
         func = mod.cffi_cos
 
         @njit
         def foo():
-            func('a')
+            func("a")
 
         with self.assertRaises(errors.TypingError) as raises:
             foo()
@@ -401,7 +408,6 @@ class TestErrorMessages(unittest.TestCase):
         self.assertIn("Type Restricted Function in function 'unknown'", excstr)
 
     def test_missing_source(self):
-
         @structref.register
         class ParticleType(types.StructRef):
             pass
@@ -421,13 +427,12 @@ class TestErrorMessages(unittest.TestCase):
 
 
 class TestDeveloperSpecificErrorMessages(SerialMixin, unittest.TestCase):
-
     def test_bound_function_error_string(self):
         # See PR #5952
         def foo(x):
             x.max(-1)
 
-        with override_config('DEVELOPER_MODE', 1):
+        with override_config("DEVELOPER_MODE", 1):
             with self.assertRaises(errors.TypingError) as raises:
                 njit("void(int64[:,:])")(foo)
 
@@ -436,34 +441,34 @@ class TestDeveloperSpecificErrorMessages(SerialMixin, unittest.TestCase):
 
 
 class TestCapturedErrorHandling(SerialMixin, TestCase):
-    """Checks that the way errors are captured.
-    """
+    """Checks that the way errors are captured."""
 
     def test_error_in_overload(self):
-
         def bar(x):
             pass
 
         @overload(bar)
         def ol_bar(x):
-            x.some_invalid_attr # doesn't exist!
+            x.some_invalid_attr  # doesn't exist!
 
             def impl(x):
                 pass
+
             return impl
 
         with warnings.catch_warnings():
             # Suppress error going into stdout
-            warnings.simplefilter("ignore",
-                                  errors.NumbaPendingDeprecationWarning)
+            warnings.simplefilter("ignore", errors.NumbaPendingDeprecationWarning)
 
             with self.assertRaises(AttributeError) as raises:
-                @njit('void(int64)')
+
+                @njit("void(int64)")
                 def foo(x):
                     bar(x)
+
             expected = "object has no attribute 'some_invalid_attr'"
             self.assertIn(expected, str(raises.exception))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

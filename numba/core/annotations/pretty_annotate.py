@@ -4,8 +4,11 @@ This module implements code highlighting of numba function annotations.
 
 from warnings import warn
 
-warn("The pretty_annotate functionality is experimental and might change API",
-         FutureWarning)
+warn(
+    "The pretty_annotate functionality is experimental and might change API",
+    FutureWarning,
+)
+
 
 def hllines(code, style):
     try:
@@ -25,6 +28,7 @@ def htlines(code, style):
     try:
         from pygments import highlight
         from pygments.lexers import PythonLexer
+
         # TerminalFormatter does not support themes, Terminal256 should,
         # but seem to not work.
         from pygments.formatters import TerminalFormatter
@@ -35,6 +39,7 @@ def htlines(code, style):
     hf = TerminalFormatter(style=style)
     res = highlight(code, pylex, hf)
     return res.splitlines()
+
 
 def get_ansi_template():
     try:
@@ -62,6 +67,7 @@ def get_ansi_template():
     {%- endfor -%}
     """)
     return ansi_template
+
 
 def get_html_template():
     try:
@@ -210,15 +216,15 @@ def get_html_template():
 
 def reform_code(annotation):
     """
-    Extract the code from the Numba annotation datastructure. 
+    Extract the code from the Numba annotation datastructure.
 
     Pygments can only highlight full multi-line strings, the Numba
     annotation is list of single lines, with indentation removed.
     """
-    ident_dict = annotation['python_indent']
-    s= ''
-    for n,l in annotation['python_lines']:
-        s = s+' '*ident_dict[n]+l+'\n'
+    ident_dict = annotation["python_indent"]
+    s = ""
+    for n, l in annotation["python_lines"]:
+        s = s + " " * ident_dict[n] + l + "\n"
     return s
 
 
@@ -263,18 +269,20 @@ class Annotate:
     [(int64, int64), (float64, float64)]
     >>> Annotate(add, signature=add.signatures[1])  # annotation for (float64, float64)
     """
-    def __init__(self, function, signature=None, **kwargs):
 
-        style = kwargs.get('style', 'default')
+    def __init__(self, function, signature=None, **kwargs):
+        style = kwargs.get("style", "default")
         if not function.signatures:
-            raise ValueError('function need to be jitted for at least one signature')
+            raise ValueError("function need to be jitted for at least one signature")
         ann = function.get_annotation_info(signature=signature)
         self.ann = ann
 
-        for k,v in ann.items():
+        for k, v in ann.items():
             res = hllines(reform_code(v), style)
             rest = htlines(reform_code(v), style)
-            v['pygments_lines'] = [(a,b,c, d) for (a,b),c, d in zip(v['python_lines'], res, rest)]
+            v["pygments_lines"] = [
+                (a, b, c, d) for (a, b), c, d in zip(v["python_lines"], res, rest)
+            ]
 
     def _repr_html_(self):
         return get_html_template().render(func_data=self.ann)

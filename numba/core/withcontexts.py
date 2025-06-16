@@ -121,9 +121,7 @@ class _CallContextType(WithContext):
         )
 
         lifted_blks = {k: blocks[k] for k in body_blocks}
-        _mutate_with_block_callee(
-            lifted_blks, blk_start, blk_end, inputs, outputs
-        )
+        _mutate_with_block_callee(lifted_blks, blk_start, blk_end, inputs, outputs)
 
         # XXX: transform body-blocks to return the output variables
         lifted_ir = func_ir.derive(
@@ -215,9 +213,7 @@ class _ObjModeContextType(WithContext):
 
     is_callable = True
 
-    def _legalize_args(
-        self, func_ir, args, kwargs, loc, func_globals, func_closures
-    ):
+    def _legalize_args(self, func_ir, args, kwargs, loc, func_globals, func_closures):
         """
         Legalize arguments to the context-manager
 
@@ -314,8 +310,7 @@ class _ObjModeContextType(WithContext):
         if getattr(typ, "reflected", False):
             msgbuf = [
                 "Objmode context failed.",
-                f"Argument {name!r} is declared as "
-                f"an unsupported type: {typ}.",
+                f"Argument {name!r} is declared as an unsupported type: {typ}.",
                 "Reflected types are not supported.",
             ]
             raise errors.CompilerError(" ".join(msgbuf), loc=loc)
@@ -406,9 +401,7 @@ class _ObjModeContextType(WithContext):
         outtup = types.Tuple([typeanns[v] for v in stripped_outs])
 
         lifted_blks = {k: blocks[k] for k in body_blocks}
-        _mutate_with_block_callee(
-            lifted_blks, blk_start, blk_end, inputs, outputs
-        )
+        _mutate_with_block_callee(lifted_blks, blk_start, blk_end, inputs, outputs)
 
         lifted_ir = func_ir.derive(
             blocks=lifted_blks,
@@ -417,9 +410,7 @@ class _ObjModeContextType(WithContext):
             force_non_generator=True,
         )
 
-        dispatcher = dispatcher_factory(
-            lifted_ir, objectmode=True, output_types=outtup
-        )
+        dispatcher = dispatcher_factory(lifted_ir, objectmode=True, output_types=outtup)
 
         newblk = _mutate_with_block_caller(
             dispatcher,
@@ -454,17 +445,13 @@ def _bypass_with_context(blocks, blk_start, blk_end, forwardvars):
     newblk = ir.Block(scope=scope, loc=loc)
     for k, v in forwardvars.items():
         newblk.append(
-            ir.Assign(
-                value=scope.get_exact(k), target=scope.get_exact(v), loc=loc
-            )
+            ir.Assign(value=scope.get_exact(k), target=scope.get_exact(v), loc=loc)
         )
     newblk.append(ir.Jump(target=blk_end, loc=loc))
     blocks[blk_start] = newblk
 
 
-def _mutate_with_block_caller(
-    dispatcher, blocks, blk_start, blk_end, inputs, outputs
-):
+def _mutate_with_block_caller(dispatcher, blocks, blk_start, blk_end, inputs, outputs):
     """Make a new block that calls into the lifeted with-context.
 
     Parameters
@@ -574,9 +561,7 @@ class _ParallelChunksize(WithContext):
         restore_state.append(ir.Assign(restore_spc_call, orig_pc_var, loc))
 
         blocks[blk_start].body = (
-            blocks[blk_start].body[1:-1]
-            + set_state
-            + [blocks[blk_start].body[-1]]
+            blocks[blk_start].body[1:-1] + set_state + [blocks[blk_start].body[-1]]
         )
         blocks[blk_end].body = restore_state + blocks[blk_end].body
         func_ir._definitions = build_definitions(blocks)
@@ -587,9 +572,7 @@ class _ParallelChunksize(WithContext):
         setting the chunksize takes only one integer input.
         """
         if len(args) != 1 or kwargs or not isinstance(args[0], int):
-            raise ValueError(
-                "parallel_chunksize takes only a " "single integer argument."
-            )
+            raise ValueError("parallel_chunksize takes only a single integer argument.")
 
         self.chunksize = args[0]
         return self

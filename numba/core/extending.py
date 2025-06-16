@@ -13,9 +13,14 @@ from numba.core.typing.typeof import typeof_impl  # noqa: F401
 from numba.core.typing.asnumbatype import as_numba_type  # noqa: F401
 from numba.core.typing.templates import infer, infer_getattr  # noqa: F401
 from numba.core.imputils import (  # noqa: F401
-    lower_builtin, lower_getattr, lower_getattr_generic,  # noqa: F401
-    lower_setattr, lower_setattr_generic, lower_cast)  # noqa: F401
-from numba.core.datamodel import models   # noqa: F401
+    lower_builtin,
+    lower_getattr,
+    lower_getattr_generic,  # noqa: F401
+    lower_setattr,
+    lower_setattr_generic,
+    lower_cast,
+)  # noqa: F401
+from numba.core.datamodel import models  # noqa: F401
 from numba.core.datamodel import register_default as register_model  # noqa: F401, E501
 from numba.core.pythonapi import box, unbox, reflect, NativeValue  # noqa: F401
 from numba._helperlib import _import_cython_function  # noqa: F401
@@ -28,8 +33,8 @@ def type_callable(func):
     *func* can be a callable object (probably a global) or a string
     denoting a built-in operation (such 'getitem' or '__array_wrap__')
     """
-    from numba.core.typing.templates import (CallableTemplate, infer,
-                                             infer_global)
+    from numba.core.typing.templates import CallableTemplate, infer, infer_global
+
     if not callable(func) and not isinstance(func, str):
         raise TypeError("`func` should be a function or string")
     try:
@@ -56,15 +61,14 @@ def type_callable(func):
 # By default, an *overload* does not have a cpython wrapper because it is not
 # callable from python. It also has `nopython=True`, this has been default since
 # its inception!
-_overload_default_jit_options = {'no_cpython_wrapper': True,
-                                 'nopython':True}
+_overload_default_jit_options = {"no_cpython_wrapper": True, "nopython": True}
 
 
 def overload(
     func,
     jit_options=MappingProxyType({}),
     strict=True,
-    inline='never',
+    inline="never",
     prefer_literal=False,
     **kwargs,
 ):
@@ -135,8 +139,9 @@ def overload(
     # this requires sorting out the circular imports first.
 
     def decorate(overload_func):
-        template = make_overload_template(func, overload_func, opts, strict,
-                                          inline, prefer_literal, **kwargs)
+        template = make_overload_template(
+            func, overload_func, opts, strict, inline, prefer_literal, **kwargs
+        )
         infer(template)
         if callable(func):
             infer_global(func, types.Function(template))
@@ -162,13 +167,15 @@ def register_jitable(*args, **kwargs):
             return x + y
 
     """
+
     def wrap(fn):
         # It is just a wrapper for @overload
-        inline = kwargs.pop('inline', 'never')
+        inline = kwargs.pop("inline", "never")
 
         @overload(fn, jit_options=kwargs, inline=inline, strict=False)
         def ov_wrap(*args, **kwargs):
             return fn
+
         return fn
 
     if kwargs:
@@ -196,10 +203,7 @@ def overload_attribute(typ, attr, **kwargs):
     from numba.core.typing.templates import make_overload_attribute_template
 
     def decorate(overload_func):
-        template = make_overload_attribute_template(
-            typ, attr, overload_func,
-            **kwargs
-        )
+        template = make_overload_attribute_template(typ, attr, overload_func, **kwargs)
         infer_getattr(template)
         overload(overload_func, **kwargs)(overload_func)
         return overload_func
@@ -208,16 +212,17 @@ def overload_attribute(typ, attr, **kwargs):
 
 
 def _overload_method_common(typ, attr, **kwargs):
-    """Common code for overload_method and overload_classmethod
-    """
+    """Common code for overload_method and overload_classmethod"""
     from numba.core.typing.templates import make_overload_method_template
 
     def decorate(overload_func):
-        copied_kwargs = kwargs.copy() # avoid mutating parent dict
+        copied_kwargs = kwargs.copy()  # avoid mutating parent dict
         template = make_overload_method_template(
-            typ, attr, overload_func,
-            inline=copied_kwargs.pop('inline', 'never'),
-            prefer_literal=copied_kwargs.pop('prefer_literal', False),
+            typ,
+            attr,
+            overload_func,
+            inline=copied_kwargs.pop("inline", "never"),
+            prefer_literal=copied_kwargs.pop("prefer_literal", False),
             **copied_kwargs,
         )
         infer_getattr(template)
@@ -290,8 +295,7 @@ def make_attribute_wrapper(typeclass, struct_attr, python_attr):
     from numba.core import cgutils
 
     if not isinstance(typeclass, type) or not issubclass(typeclass, types.Type):
-        raise TypeError("typeclass should be a Type subclass, got %s"
-                        % (typeclass,))
+        raise TypeError("typeclass should be a Type subclass, got %s" % (typeclass,))
 
     def get_attr_fe_type(typ):
         """
@@ -299,8 +303,10 @@ def make_attribute_wrapper(typeclass, struct_attr, python_attr):
         """
         model = default_manager.lookup(typ)
         if not isinstance(model, StructModel):
-            raise TypeError("make_struct_attribute_wrapper() needs a type "
-                            "with a StructModel, but got %s" % (model,))
+            raise TypeError(
+                "make_struct_attribute_wrapper() needs a type "
+                "with a StructModel, but got %s" % (model,)
+            )
         return model.get_member_fe_type(struct_attr)
 
     @infer_getattr
@@ -323,8 +329,9 @@ class _Intrinsic(ReduceMixin):
     """
     Dummy callable for intrinsic
     """
+
     _memo: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
-    __cache_size = config.FUNCTION_CACHE_SIZE # type: ignore
+    __cache_size = config.FUNCTION_CACHE_SIZE  # type: ignore
     # hold refs to last N functions deserialized, retaining them in _memo
     # regardless of whether there is another reference
     _recent: collections.deque = collections.deque(maxlen=__cache_size)
@@ -360,12 +367,15 @@ class _Intrinsic(ReduceMixin):
 
     def _register(self):
         # _ctor_kwargs
-        from numba.core.typing.templates import (make_intrinsic_template,
-                                                 infer_global)
+        from numba.core.typing.templates import make_intrinsic_template, infer_global
 
-        template = make_intrinsic_template(self, self._defn, self._name,
-                                           prefer_literal=self._prefer_literal,
-                                           kwargs=self._ctor_kwargs)
+        template = make_intrinsic_template(
+            self,
+            self._defn,
+            self._name,
+            prefer_literal=self._prefer_literal,
+            kwargs=self._ctor_kwargs,
+        )
         infer(template)
         infer_global(self, types.Function(template))
 
@@ -373,7 +383,7 @@ class _Intrinsic(ReduceMixin):
         """
         This is only defined to pretend to be a callable from CPython.
         """
-        msg = '{0} is not usable in pure-python'.format(self)
+        msg = "{0} is not usable in pure-python".format(self)
         raise NotImplementedError(msg)
 
     def __repr__(self):
@@ -440,9 +450,10 @@ def intrinsic(*args, **kwargs):
                     return builder.inttoptr(src, llrtype)
                 return sig, codegen
     """
+
     # Make inner function for the actual work
     def _intrinsic(func):
-        name = getattr(func, '__name__', str(func))
+        name = getattr(func, "__name__", str(func))
         llc = _Intrinsic(name, func, **kwargs)
         llc._register()
         return llc
@@ -455,6 +466,7 @@ def intrinsic(*args, **kwargs):
         # definition function
         def wrapper(func):
             return _intrinsic(func)
+
         return wrapper
 
 
@@ -478,8 +490,7 @@ def get_cython_function_address(module_name, function_name):
 
 
 def include_path():
-    """Returns the C include directory path.
-    """
+    """Returns the C include directory path."""
     include_dir = os.path.dirname(os.path.dirname(numba.__file__))
     path = os.path.abspath(include_dir)
     return path
@@ -516,8 +527,7 @@ def sentry_literal_args(pysig, literal_args, args, kwargs):
         raise e.bind_fold_arguments(folded)
 
 
-class SentryLiteralArgs(collections.namedtuple(
-        '_SentryLiteralArgs', ['literal_args'])):
+class SentryLiteralArgs(collections.namedtuple("_SentryLiteralArgs", ["literal_args"])):
     """
     Parameters
     ----------
@@ -535,6 +545,7 @@ class SentryLiteralArgs(collections.namedtuple(
 
     >>> sentry_literal_args(pysig, literal_args, args, kwargs)
     """
+
     def for_function(self, func):
         """Bind the sentry to the signature of *func*.
 
@@ -567,14 +578,15 @@ class SentryLiteralArgs(collections.namedtuple(
         )
 
 
-class BoundLiteralArgs(collections.namedtuple(
-        'BoundLiteralArgs', ['pysig', 'literal_args'])):
+class BoundLiteralArgs(
+    collections.namedtuple("BoundLiteralArgs", ["pysig", "literal_args"])
+):
     """
     This class is usually created by SentryLiteralArgs.
     """
+
     def bind(self, *args, **kwargs):
-        """Bind to argument types.
-        """
+        """Bind to argument types."""
         return sentry_literal_args(
             self.pysig,
             self.literal_args,
@@ -593,4 +605,5 @@ def is_jitted(function):
 
     # don't want to export this so import locally
     from numba.core.dispatcher import Dispatcher
+
     return isinstance(function, Dispatcher)

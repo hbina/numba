@@ -9,22 +9,25 @@ from numba import jit, njit
 from numba.core import types, utils, errors
 from numba.core.types.functions import _header_lead
 from numba.tests.support import TestCase, tag, needs_blas
-from numba.tests.matmul_usecase import (matmul_usecase, imatmul_usecase,
-                                        DumbMatrix,)
+from numba.tests.matmul_usecase import (
+    matmul_usecase,
+    imatmul_usecase,
+    DumbMatrix,
+)
 
-Noflags = {'nopython': True}
+Noflags = {"nopython": True}
 
-force_pyobj_flags = {'forceobj': True}
+force_pyobj_flags = {"forceobj": True}
 
 
 def make_static_power(exp):
     def pow_usecase(x):
-        return x ** exp
+        return x**exp
+
     return pow_usecase
 
 
 class LiteralOperatorImpl(object):
-
     @staticmethod
     def add_usecase(x, y):
         return x + y
@@ -85,7 +88,7 @@ class LiteralOperatorImpl(object):
 
     @staticmethod
     def pow_usecase(x, y):
-        return x ** y
+        return x**y
 
     @staticmethod
     def ipow_usecase(x, y):
@@ -147,7 +150,7 @@ class LiteralOperatorImpl(object):
 
     @staticmethod
     def not_usecase(x):
-        return not(x)
+        return not (x)
 
     @staticmethod
     def negate_usecase(x):
@@ -195,7 +198,6 @@ class LiteralOperatorImpl(object):
 
 
 class FunctionalOperatorImpl(object):
-
     @staticmethod
     def add_usecase(x, y):
         return operator.add(x, y)
@@ -367,21 +369,22 @@ class TestOperators(TestCase):
     op = LiteralOperatorImpl
 
     _bitwise_opnames = {
-        'bitshift_left_usecase': operator.lshift,
-        'bitshift_ileft_usecase': operator.ilshift,
-        'bitshift_right_usecase': operator.rshift,
-        'bitshift_iright_usecase': operator.irshift,
-        'bitwise_and_usecase': operator.and_,
-        'bitwise_iand_usecase': operator.iand,
-        'bitwise_or_usecase': operator.or_,
-        'bitwise_ior_usecase': operator.ior,
-        'bitwise_xor_usecase': operator.xor,
-        'bitwise_ixor_usecase': operator.ixor,
-        'bitwise_not_usecase_binary': operator.invert,
+        "bitshift_left_usecase": operator.lshift,
+        "bitshift_ileft_usecase": operator.ilshift,
+        "bitshift_right_usecase": operator.rshift,
+        "bitshift_iright_usecase": operator.irshift,
+        "bitwise_and_usecase": operator.and_,
+        "bitwise_iand_usecase": operator.iand,
+        "bitwise_or_usecase": operator.or_,
+        "bitwise_ior_usecase": operator.ior,
+        "bitwise_xor_usecase": operator.xor,
+        "bitwise_ixor_usecase": operator.ixor,
+        "bitwise_not_usecase_binary": operator.invert,
     }
 
-    def run_test_ints(self, pyfunc, x_operands, y_operands, types_list,
-                      flags=force_pyobj_flags):
+    def run_test_ints(
+        self, pyfunc, x_operands, y_operands, types_list, flags=force_pyobj_flags
+    ):
         for arg_types in types_list:
             cfunc = jit(arg_types, **flags)(pyfunc)
             for x, y in itertools.product(x_operands, y_operands):
@@ -392,16 +395,21 @@ class TestOperators(TestCase):
                 got = cfunc(x_got, y)
                 expected = pyfunc(x_expected, y)
                 self.assertPreciseEqual(
-                    got, expected,
+                    got,
+                    expected,
                     msg="mismatch for (%r, %r) with types %s: %r != %r"
-                        % (x, y, arg_types, got, expected))
+                    % (x, y, arg_types, got, expected),
+                )
                 self.assertPreciseEqual(
-                    x_got, x_expected,
+                    x_got,
+                    x_expected,
                     msg="mismatch for (%r, %r) with types %s: %r != %r"
-                        % (x, y, arg_types, x_got, x_expected))
+                    % (x, y, arg_types, x_got, x_expected),
+                )
 
-    def run_test_floats(self, pyfunc, x_operands, y_operands, types_list,
-                        flags=force_pyobj_flags):
+    def run_test_floats(
+        self, pyfunc, x_operands, y_operands, types_list, flags=force_pyobj_flags
+    ):
         for arg_types in types_list:
             cfunc = jit(arg_types, **flags)(pyfunc)
             for x, y in itertools.product(x_operands, y_operands):
@@ -426,8 +434,7 @@ class TestOperators(TestCase):
         else:
             return op
 
-    def run_test_scalar_compare(self, pyfunc, flags=force_pyobj_flags,
-                                ordered=True):
+    def run_test_scalar_compare(self, pyfunc, flags=force_pyobj_flags, ordered=True):
         ops = self.compare_scalar_operands
         types_list = self.compare_types
         if not ordered:
@@ -441,19 +448,23 @@ class TestOperators(TestCase):
                 got = cfunc(x, y)
                 # Scalar ops => scalar result
                 self.assertIs(type(got), type(expected))
-                self.assertEqual(got, expected,
-                                 "mismatch with %r (%r, %r)"
-                                 % (typ, x, y))
-
+                self.assertEqual(
+                    got, expected, "mismatch with %r (%r, %r)" % (typ, x, y)
+                )
 
     #
     # Comparison operators
     #
 
     compare_scalar_operands = [-0.5, -1.0 + 1j, -1.0 + 2j, -0.5 + 1j, 1.5]
-    compare_types = [types.int32, types.int64,
-                     types.uint32, types.uint64,
-                     types.float32, types.float64]
+    compare_types = [
+        types.int32,
+        types.int64,
+        types.uint32,
+        types.uint64,
+        types.float32,
+        types.float64,
+    ]
     compare_unordered_types = [types.complex64, types.complex128]
 
     def test_lt_scalar(self, flags=force_pyobj_flags):
@@ -498,9 +509,9 @@ class TestOperators(TestCase):
 
     def test_is_void_ptr(self):
         # can't call this directly from python, as void cannot be unboxed
-        cfunc_void = jit(
-            (types.voidptr, types.voidptr), nopython=True
-        )(self.op.is_usecase)
+        cfunc_void = jit((types.voidptr, types.voidptr), nopython=True)(
+            self.op.is_usecase
+        )
 
         # this wrapper performs the casts from int to voidptr for us
         @jit(nopython=True)
@@ -520,38 +531,34 @@ class TestOperators(TestCase):
 
         types_list = [(types.boolean, types.boolean)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     def run_binop_ints(self, pyfunc, flags=force_pyobj_flags):
         x_operands = [-5, 0, 1, 2]
         y_operands = [-3, -1, 1, 3]
 
-        types_list = [(types.int32, types.int32),
-                      (types.int64, types.int64)]
+        types_list = [(types.int32, types.int32), (types.int64, types.int64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = [2, 3]
         y_operands = [1, 2]
 
-        types_list = [(types.byte, types.byte),
-                      (types.uint32, types.uint32),
-                      (types.uint64, types.uint64)]
+        types_list = [
+            (types.byte, types.byte),
+            (types.uint32, types.uint32),
+            (types.uint64, types.uint64),
+        ]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     def run_binop_floats(self, pyfunc, flags=force_pyobj_flags):
         x_operands = [-1.1, 0.0, 1.1]
         y_operands = [-1.5, 0.8, 2.1]
 
-        types_list = [(types.float32, types.float32),
-                      (types.float64, types.float64)]
+        types_list = [(types.float32, types.float32), (types.float64, types.float64)]
 
-        self.run_test_floats(pyfunc, x_operands, y_operands, types_list,
-                             flags=flags)
+        self.run_test_floats(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     def run_binop_floats_floordiv(self, pyfunc, flags=force_pyobj_flags):
         self.run_binop_floats(pyfunc, flags=flags)
@@ -560,11 +567,12 @@ class TestOperators(TestCase):
         x_operands = [-1.1 + 0.3j, 0.0 + 0.0j, 1.1j]
         y_operands = [-1.5 - 0.7j, 0.8j, 2.1 - 2.0j]
 
-        types_list = [(types.complex64, types.complex64),
-                      (types.complex128, types.complex128)]
+        types_list = [
+            (types.complex64, types.complex64),
+            (types.complex128, types.complex128),
+        ]
 
-        self.run_test_floats(pyfunc, x_operands, y_operands, types_list,
-                             flags=flags)
+        self.run_test_floats(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     def generate_binop_tests(ns, usecases, tp_runners, npm_array=False):
         for usecase in usecases:
@@ -576,13 +584,18 @@ class TestOperators(TestCase):
                     flags = Noflags if nopython else force_pyobj_flags
                     usecase_name = "%s_usecase" % usecase
 
-                    def inner(self, runner_name=runner_name,
-                              usecase_name=usecase_name, flags=flags):
+                    def inner(
+                        self,
+                        runner_name=runner_name,
+                        usecase_name=usecase_name,
+                        flags=flags,
+                    ):
                         runner = getattr(self, runner_name)
                         op_usecase = getattr(self.op, usecase_name)
                         runner(op_usecase, flags)
 
-                    if nopython and 'array' in tp_name and not npm_array:
+                    if nopython and "array" in tp_name and not npm_array:
+
                         def test_meth(self):
                             with self.assertTypingError():
                                 inner()
@@ -592,34 +605,43 @@ class TestOperators(TestCase):
                     test_meth.__name__ = test_name
 
                     if nopython:
-                        test_meth = tag('important')(test_meth)
+                        test_meth = tag("important")(test_meth)
 
                     ns[test_name] = test_meth
 
+    generate_binop_tests(
+        locals(),
+        ("add", "iadd", "sub", "isub", "mul", "imul"),
+        {
+            "ints": "run_binop_ints",
+            "floats": "run_binop_floats",
+            "complex": "run_binop_complex",
+        },
+    )
 
-    generate_binop_tests(locals(),
-                         ('add', 'iadd', 'sub', 'isub', 'mul', 'imul'),
-                         {'ints': 'run_binop_ints',
-                          'floats': 'run_binop_floats',
-                          'complex': 'run_binop_complex',
-                          })
-
-    generate_binop_tests(locals(),
-                         ('truediv', 'itruediv'),
-                         {'ints': 'run_binop_ints',
-                          'floats': 'run_binop_floats',
-                          'complex': 'run_binop_complex',
-                          })
+    generate_binop_tests(
+        locals(),
+        ("truediv", "itruediv"),
+        {
+            "ints": "run_binop_ints",
+            "floats": "run_binop_floats",
+            "complex": "run_binop_complex",
+        },
+    )
 
     # NOTE: floordiv and mod unsupported for complex numbers
-    generate_binop_tests(locals(),
-                         ('floordiv', 'ifloordiv', 'mod', 'imod'),
-                         {'ints': 'run_binop_ints',
-                          'floats': 'run_binop_floats_floordiv',
-                          })
+    generate_binop_tests(
+        locals(),
+        ("floordiv", "ifloordiv", "mod", "imod"),
+        {
+            "ints": "run_binop_ints",
+            "floats": "run_binop_floats_floordiv",
+        },
+    )
 
-    def check_div_errors(self, usecase_name, msg, flags=force_pyobj_flags,
-                         allow_complex=False):
+    def check_div_errors(
+        self, usecase_name, msg, flags=force_pyobj_flags, allow_complex=False
+    ):
         pyfunc = getattr(self.op, usecase_name)
         # Signed and unsigned division can take different code paths,
         # test them both.
@@ -635,8 +657,9 @@ class TestOperators(TestCase):
                 self.assertIn(msg, str(cm.exception))
 
     def test_truediv_errors(self, flags=force_pyobj_flags):
-        self.check_div_errors("truediv_usecase", "division by zero", flags=flags,
-                              allow_complex=True)
+        self.check_div_errors(
+            "truediv_usecase", "division by zero", flags=flags, allow_complex=True
+        )
 
     def test_truediv_errors_npm(self):
         self.test_truediv_errors(flags=Noflags)
@@ -657,59 +680,58 @@ class TestOperators(TestCase):
         x_operands = [-2, -1, 0, 1, 2]
         y_operands = [0, 1, 2]
 
-        types_list = [(types.int32, types.int32),
-                      (types.int64, types.int64)]
+        types_list = [(types.int32, types.int32), (types.int64, types.int64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = [0, 1, 2]
         y_operands = [0, 1, 2]
 
-        types_list = [(types.byte, types.byte),
-                      (types.uint32, types.uint32),
-                      (types.uint64, types.uint64)]
+        types_list = [
+            (types.byte, types.byte),
+            (types.uint32, types.uint32),
+            (types.uint64, types.uint64),
+        ]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     def run_pow_floats(self, pyfunc, flags=force_pyobj_flags):
         x_operands = [-222.222, -111.111, 111.111, 222.222]
         y_operands = [-2, -1, 0, 1, 2]
 
-        types_list = [(types.float32, types.float32),
-                      (types.float64, types.float64)]
+        types_list = [(types.float32, types.float32), (types.float64, types.float64)]
 
-        self.run_test_floats(pyfunc, x_operands, y_operands, types_list,
-                             flags=flags)
+        self.run_test_floats(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = [0.0]
         y_operands = [0, 1, 2]  # TODO native handling of 0 ** negative power
 
-        types_list = [(types.float32, types.float32),
-                      (types.float64, types.float64)]
+        types_list = [(types.float32, types.float32), (types.float64, types.float64)]
 
-        self.run_test_floats(pyfunc, x_operands, y_operands, types_list,
-                             flags=flags)
+        self.run_test_floats(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     # XXX power operator is unsupported on complex numbers (see issue #488)
-    generate_binop_tests(locals(),
-                         ('pow', 'ipow'),
-                         {'ints': 'run_pow_ints',
-                          'floats': 'run_pow_floats',
-                          })
+    generate_binop_tests(
+        locals(),
+        ("pow", "ipow"),
+        {
+            "ints": "run_pow_ints",
+            "floats": "run_pow_floats",
+        },
+    )
 
     def test_add_complex(self, flags=force_pyobj_flags):
         pyfunc = self.op.add_usecase
 
-        x_operands = [1+0j, 1j, -1-1j]
+        x_operands = [1 + 0j, 1j, -1 - 1j]
         y_operands = x_operands
 
-        types_list = [(types.complex64, types.complex64),
-                      (types.complex128, types.complex128),]
+        types_list = [
+            (types.complex64, types.complex64),
+            (types.complex128, types.complex128),
+        ]
 
-        self.run_test_floats(pyfunc, x_operands, y_operands, types_list,
-                             flags=flags)
+        self.run_test_floats(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     def test_add_complex_npm(self):
         self.test_add_complex(flags=Noflags)
@@ -717,14 +739,15 @@ class TestOperators(TestCase):
     def test_sub_complex(self, flags=force_pyobj_flags):
         pyfunc = self.op.sub_usecase
 
-        x_operands = [1+0j, 1j, -1-1j]
+        x_operands = [1 + 0j, 1j, -1 - 1j]
         y_operands = [1, 2, 3]
 
-        types_list = [(types.complex64, types.complex64),
-                      (types.complex128, types.complex128),]
+        types_list = [
+            (types.complex64, types.complex64),
+            (types.complex128, types.complex128),
+        ]
 
-        self.run_test_floats(pyfunc, x_operands, y_operands, types_list,
-                             flags=flags)
+        self.run_test_floats(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     def test_sub_complex_npm(self):
         self.test_sub_complex(flags=Noflags)
@@ -732,14 +755,15 @@ class TestOperators(TestCase):
     def test_mul_complex(self, flags=force_pyobj_flags):
         pyfunc = self.op.mul_usecase
 
-        x_operands = [1+0j, 1j, -1-1j]
+        x_operands = [1 + 0j, 1j, -1 - 1j]
         y_operands = [1, 2, 3]
 
-        types_list = [(types.complex64, types.complex64),
-                      (types.complex128, types.complex128),]
+        types_list = [
+            (types.complex64, types.complex64),
+            (types.complex128, types.complex128),
+        ]
 
-        self.run_test_floats(pyfunc, x_operands, y_operands, types_list,
-                             flags=flags)
+        self.run_test_floats(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     def test_mul_complex_npm(self):
         self.test_mul_complex(flags=Noflags)
@@ -747,14 +771,15 @@ class TestOperators(TestCase):
     def test_truediv_complex(self, flags=force_pyobj_flags):
         pyfunc = self.op.truediv_usecase
 
-        x_operands = [1+0j, 1j, -1-1j]
+        x_operands = [1 + 0j, 1j, -1 - 1j]
         y_operands = [1, 2, 3]
 
-        types_list = [(types.complex64, types.complex64),
-                      (types.complex128, types.complex128),]
+        types_list = [
+            (types.complex64, types.complex64),
+            (types.complex128, types.complex128),
+        ]
 
-        self.run_test_floats(pyfunc, x_operands, y_operands, types_list,
-                             flags=flags)
+        self.run_test_floats(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
     def test_truediv_complex_npm(self):
         self.test_truediv_complex(flags=Noflags)
@@ -804,7 +829,7 @@ class TestOperators(TestCase):
 
     @needs_blas
     def check_matmul_npm(self, pyfunc):
-        arrty = types.Array(types.float32, 1, 'C')
+        arrty = types.Array(types.float32, 1, "C")
         cfunc = njit((arrty, arrty))(pyfunc)
         a = np.float32([1, 2])
         b = np.float32([3, 4])
@@ -831,37 +856,36 @@ class TestOperators(TestCase):
 
         types_list = [(types.uint32, types.uint32)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = [0, 1]
         y_operands = [0, 1, 2, 4, 8, 16, 32, 63]
 
         types_list = [(types.uint64, types.uint64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = [0, -1]
         y_operands = [0, 1, 2, 4, 8, 16, 31]
 
         types_list = [(types.int32, types.int32)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = [0, -1]
         y_operands = [0, 1, 2, 4, 8, 16, 32, 63]
 
         types_list = [(types.int64, types.int64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
-    generate_binop_tests(locals(),
-                         ('bitshift_left', 'bitshift_ileft'),
-                         {'ints': 'run_bitshift_left',
-                          })
+    generate_binop_tests(
+        locals(),
+        ("bitshift_left", "bitshift_ileft"),
+        {
+            "ints": "run_bitshift_left",
+        },
+    )
 
     def run_bitshift_right(self, pyfunc, flags=force_pyobj_flags):
         x_operands = [0, 1, 2**32 - 1]
@@ -869,37 +893,36 @@ class TestOperators(TestCase):
 
         types_list = [(types.uint32, types.uint32)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = [0, 1, 2**64 - 1]
         y_operands = [0, 1, 2, 4, 8, 16, 32, 63]
 
         types_list = [(types.uint64, types.uint64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = [0, 1, -(2**31)]
         y_operands = [0, 1, 2, 4, 8, 16, 31]
 
         types_list = [(types.int32, types.int32)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = [0, -1, -(2**31)]
         y_operands = [0, 1, 2, 4, 8, 16, 32, 63]
 
         types_list = [(types.int64, types.int64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
-    generate_binop_tests(locals(),
-                         ('bitshift_right', 'bitshift_iright'),
-                         {'ints': 'run_bitshift_right',
-                          })
+    generate_binop_tests(
+        locals(),
+        ("bitshift_right", "bitshift_iright"),
+        {
+            "ints": "run_bitshift_right",
+        },
+    )
 
     def run_logical(self, pyfunc, flags=force_pyobj_flags):
         x_operands = list(range(0, 8)) + [2**32 - 1]
@@ -907,40 +930,44 @@ class TestOperators(TestCase):
 
         types_list = [(types.uint32, types.uint32)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = list(range(0, 8)) + [2**64 - 1]
         y_operands = list(range(0, 8)) + [2**64 - 1]
 
         types_list = [(types.uint64, types.uint64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = list(range(-4, 4)) + [-(2**31), 2**31 - 1]
         y_operands = list(range(-4, 4)) + [-(2**31), 2**31 - 1]
 
         types_list = [(types.int32, types.int32)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = list(range(-4, 4)) + [-(2**63), 2**63 - 1]
         y_operands = list(range(-4, 4)) + [-(2**63), 2**63 - 1]
 
         types_list = [(types.int64, types.int64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
-    generate_binop_tests(locals(),
-                         ('bitwise_and', 'bitwise_iand',
-                          'bitwise_or', 'bitwise_ior',
-                          'bitwise_xor', 'bitwise_ixor'),
-                         {'ints': 'run_logical',
-                          'bools': 'run_binop_bools',
-                          })
+    generate_binop_tests(
+        locals(),
+        (
+            "bitwise_and",
+            "bitwise_iand",
+            "bitwise_or",
+            "bitwise_ior",
+            "bitwise_xor",
+            "bitwise_ixor",
+        ),
+        {
+            "ints": "run_logical",
+            "bools": "run_binop_bools",
+        },
+    )
 
     #
     # Unary operators
@@ -955,16 +982,14 @@ class TestOperators(TestCase):
 
         types_list = [(types.uint32, types.uint32)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = list(range(-4, 4)) + [-(2**31), 2**31 - 1]
         y_operands = [0]
 
         types_list = [(types.int32, types.int32)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = list(range(0, 8)) + [2**64 - 1]
         x_operands = [np.uint64(x) for x in x_operands]
@@ -972,16 +997,14 @@ class TestOperators(TestCase):
 
         types_list = [(types.uint64, types.uint64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         x_operands = list(range(-4, 4)) + [-(2**63), 2**63 - 1]
         y_operands = [0]
 
         types_list = [(types.int64, types.int64)]
 
-        self.run_test_ints(pyfunc, x_operands, y_operands, types_list,
-                           flags=flags)
+        self.run_test_ints(pyfunc, x_operands, y_operands, types_list, flags=flags)
 
         # For booleans, we follow Numpy semantics (i.e. ~True == False,
         # not ~True == -2)
@@ -1000,35 +1023,39 @@ class TestOperators(TestCase):
         """
         Make sure that bitwise float operations are not allowed
         """
+
         def assert_reject_compile(pyfunc, argtypes, opname):
-            msg = 'expecting TypingError when compiling {}'.format(pyfunc)
+            msg = "expecting TypingError when compiling {}".format(pyfunc)
             with self.assertRaises(errors.TypingError, msg=msg) as raises:
                 njit(argtypes)(pyfunc)
             # check error message
-            fmt = _header_lead + ' {}'
-            expecting = fmt.format(opname
-                                   if isinstance(opname, str)
-                                   else 'Function({})'.format(opname))
+            fmt = _header_lead + " {}"
+            expecting = fmt.format(
+                opname if isinstance(opname, str) else "Function({})".format(opname)
+            )
             self.assertIn(expecting, str(raises.exception))
 
         methods = [
-            'bitshift_left_usecase',
-            'bitshift_ileft_usecase',
-            'bitshift_right_usecase',
-            'bitshift_iright_usecase',
-            'bitwise_and_usecase',
-            'bitwise_iand_usecase',
-            'bitwise_or_usecase',
-            'bitwise_ior_usecase',
-            'bitwise_xor_usecase',
-            'bitwise_ixor_usecase',
-            'bitwise_not_usecase_binary',
+            "bitshift_left_usecase",
+            "bitshift_ileft_usecase",
+            "bitshift_right_usecase",
+            "bitshift_iright_usecase",
+            "bitwise_and_usecase",
+            "bitwise_iand_usecase",
+            "bitwise_or_usecase",
+            "bitwise_ior_usecase",
+            "bitwise_xor_usecase",
+            "bitwise_ixor_usecase",
+            "bitwise_not_usecase_binary",
         ]
 
         for name in methods:
             pyfunc = getattr(self.op, name)
-            assert_reject_compile(pyfunc, (types.float32, types.float32),
-                                  opname=self._bitwise_opnames[name])
+            assert_reject_compile(
+                pyfunc,
+                (types.float32, types.float32),
+                opname=self._bitwise_opnames[name],
+            )
 
     def test_not(self):
         pyfunc = self.op.not_usecase
@@ -1064,8 +1091,7 @@ class TestOperators(TestCase):
         ]
         for ty, val in zip(argtys, values):
             cfunc = njit((ty,))(pyfunc)
-            self.assertEqual(cfunc.nopython_signatures[0].return_type,
-                             types.boolean)
+            self.assertEqual(cfunc.nopython_signatures[0].return_type, types.boolean)
             self.assertEqual(pyfunc(val), cfunc(val))
 
     # XXX test_negate should check for negative and positive zeros and infinities
@@ -1097,7 +1123,6 @@ class TestOperators(TestCase):
             cfunc = njit((ty,))(pyfunc)
             self.assertAlmostEqual(pyfunc(val), cfunc(val))
 
-
     def test_negate(self):
         pyfunc = self.op.negate_usecase
         values = [
@@ -1126,16 +1151,7 @@ class TestOperators(TestCase):
             types.boolean,
             types.boolean,
         ]
-        values = [
-            1,
-            2,
-            3,
-            1.2,
-            2.4,
-            3.4j,
-            True,
-            False
-        ]
+        values = [1, 2, 3, 1.2, 2.4, 3.4j, True, False]
         for ty, val in zip(argtys, values):
             cfunc = njit((ty,))(pyfunc)
             self.assertAlmostEqual(pyfunc(val), cfunc(val))
@@ -1176,21 +1192,20 @@ class TestOperators(TestCase):
 
 
 class TestOperatorModule(TestOperators):
-
     op = FunctionalOperatorImpl
 
     _bitwise_opnames = {
-        'bitshift_left_usecase': operator.lshift,
-        'bitshift_ileft_usecase': operator.ilshift,
-        'bitshift_right_usecase': operator.rshift,
-        'bitshift_iright_usecase': operator.irshift,
-        'bitwise_and_usecase': operator.and_,
-        'bitwise_iand_usecase': operator.iand,
-        'bitwise_or_usecase': operator.or_,
-        'bitwise_ior_usecase': operator.ior,
-        'bitwise_xor_usecase': operator.xor,
-        'bitwise_ixor_usecase': operator.ixor,
-        'bitwise_not_usecase_binary': operator.invert,
+        "bitshift_left_usecase": operator.lshift,
+        "bitshift_ileft_usecase": operator.ilshift,
+        "bitshift_right_usecase": operator.rshift,
+        "bitshift_iright_usecase": operator.irshift,
+        "bitwise_and_usecase": operator.and_,
+        "bitwise_iand_usecase": operator.iand,
+        "bitwise_or_usecase": operator.or_,
+        "bitwise_ior_usecase": operator.ior,
+        "bitwise_xor_usecase": operator.xor,
+        "bitwise_ixor_usecase": operator.ixor,
+        "bitwise_not_usecase_binary": operator.invert,
     }
 
 
@@ -1207,10 +1222,8 @@ class TestMixedInts(TestCase):
     signed_types = [tp for tp in int_types if tp.signed]
     unsigned_types = [tp for tp in int_types if not tp.signed]
     type_pairs = list(itertools.product(int_types, int_types))
-    signed_pairs = [(u, v) for u, v in type_pairs
-                    if u.signed or v.signed]
-    unsigned_pairs = [(u, v) for u, v in type_pairs
-                      if not (u.signed or v.signed)]
+    signed_pairs = [(u, v) for u, v in type_pairs if u.signed or v.signed]
+    unsigned_pairs = [(u, v) for u, v in type_pairs if not (u.signed or v.signed)]
 
     def int_in_dtype_range(self, val, tp):
         tp_info = np.iinfo(tp.key)
@@ -1231,26 +1244,39 @@ class TestMixedInts(TestCase):
 
     def get_control_signed(self, opname):
         op = getattr(operator, opname)
+
         def control_signed(a, b):
             tp = self.get_numpy_signed_upcast(a, b)
             return op(tp(a), tp(b))
+
         return control_signed
 
     def get_control_unsigned(self, opname):
         op = getattr(operator, opname)
+
         def control_unsigned(a, b):
             tp = self.get_numpy_unsigned_upcast(a, b)
             return op(tp(a), tp(b))
+
         return control_unsigned
 
-    def run_binary(self, pyfunc, control_func, operands, types,
-                   expected_type=int, force_type=lambda x: x,
-                   **assertPreciseEqualArgs):
+    def run_binary(
+        self,
+        pyfunc,
+        control_func,
+        operands,
+        types,
+        expected_type=int,
+        force_type=lambda x: x,
+        **assertPreciseEqualArgs,
+    ):
         for xt, yt in types:
             cfunc = njit((xt, yt))(pyfunc)
             for x, y in itertools.product(operands, operands):
                 # Check if xt and yt are values with range of dtype x and y
-                if not self.int_in_dtype_range(x, xt) or not self.int_in_dtype_range(y, yt):
+                if not self.int_in_dtype_range(x, xt) or not self.int_in_dtype_range(
+                    y, yt
+                ):
                     continue
                 # Get Numpy typed scalars for the given types and values
                 x = self.get_typed_int(xt, x)
@@ -1258,14 +1284,13 @@ class TestMixedInts(TestCase):
                 expected = control_func(x, y)
                 got = cfunc(x, y)
                 self.assertIsInstance(got, expected_type)
-                msg = ("mismatch for (%r, %r) with types %s"
-                       % (x, y, (xt, yt)))
+                msg = "mismatch for (%r, %r) with types %s" % (x, y, (xt, yt))
                 got, expected = force_type(got), force_type(expected)
-                self.assertPreciseEqual(got, expected, msg=msg,
-                                        **assertPreciseEqualArgs)
+                self.assertPreciseEqual(
+                    got, expected, msg=msg, **assertPreciseEqualArgs
+                )
 
-    def run_unary(self, pyfunc, control_func, operands, types,
-                  expected_type=int):
+    def run_unary(self, pyfunc, control_func, operands, types, expected_type=int):
         for xt in types:
             cfunc = njit((xt,))(pyfunc)
             for x in operands:
@@ -1276,38 +1301,56 @@ class TestMixedInts(TestCase):
                 got = cfunc(x)
                 self.assertIsInstance(got, expected_type)
                 self.assertPreciseEqual(
-                    got, expected,
+                    got,
+                    expected,
                     msg="mismatch for %r with type %s: %r != %r"
-                        % (x, xt, got, expected))
+                    % (x, xt, got, expected),
+                )
 
-    def run_arith_binop(self, pyfunc, opname, samples,
-                        expected_type=int, force_type=lambda x: x,
-                        **assertPreciseEqualArgs):
-        self.run_binary(pyfunc, self.get_control_signed(opname),
-                        samples, self.signed_pairs, expected_type,
-                        force_type=force_type,
-                        **assertPreciseEqualArgs)
-        self.run_binary(pyfunc, self.get_control_unsigned(opname),
-                        samples, self.unsigned_pairs, expected_type,
-                        force_type=force_type,
-                        **assertPreciseEqualArgs)
+    def run_arith_binop(
+        self,
+        pyfunc,
+        opname,
+        samples,
+        expected_type=int,
+        force_type=lambda x: x,
+        **assertPreciseEqualArgs,
+    ):
+        self.run_binary(
+            pyfunc,
+            self.get_control_signed(opname),
+            samples,
+            self.signed_pairs,
+            expected_type,
+            force_type=force_type,
+            **assertPreciseEqualArgs,
+        )
+        self.run_binary(
+            pyfunc,
+            self.get_control_unsigned(opname),
+            samples,
+            self.unsigned_pairs,
+            expected_type,
+            force_type=force_type,
+            **assertPreciseEqualArgs,
+        )
 
     def test_add(self):
-        self.run_arith_binop(self.op.add_usecase, 'add', self.int_samples)
+        self.run_arith_binop(self.op.add_usecase, "add", self.int_samples)
 
     def test_sub(self):
-        self.run_arith_binop(self.op.sub_usecase, 'sub', self.int_samples)
+        self.run_arith_binop(self.op.sub_usecase, "sub", self.int_samples)
 
     def test_mul(self):
-        self.run_arith_binop(self.op.mul_usecase, 'mul', self.int_samples)
+        self.run_arith_binop(self.op.mul_usecase, "mul", self.int_samples)
 
     def test_floordiv(self):
         samples = [x for x in self.int_samples if x != 0]
-        self.run_arith_binop(self.op.floordiv_usecase, 'floordiv', samples)
+        self.run_arith_binop(self.op.floordiv_usecase, "floordiv", samples)
 
     def test_mod(self):
         samples = [x for x in self.int_samples if x != 0]
-        self.run_arith_binop(self.op.mod_usecase, 'mod', samples)
+        self.run_arith_binop(self.op.mod_usecase, "mod", samples)
 
     def test_pow(self):
         extra_cast = {}
@@ -1317,7 +1360,7 @@ class TestMixedInts(TestCase):
         # Only test with positive values, as otherwise trying to write the
         # control function in terms of Python or Numpy power turns out insane.
         samples = [x for x in self.int_samples if x >= 0]
-        self.run_arith_binop(pyfunc, 'pow', samples, **extra_cast)
+        self.run_arith_binop(pyfunc, "pow", samples, **extra_cast)
 
         # Now test all non-zero values, but only with signed types
         def control_signed(a, b):
@@ -1330,41 +1373,54 @@ class TestMixedInts(TestCase):
                     # Overflow
                     return 0
                 return np.intp(1.0 / inv)
+
         samples = [x for x in self.int_samples if x != 0]
-        signed_pairs = [(u, v) for u, v in self.type_pairs
-                        if u.signed and v.signed]
-        self.run_binary(pyfunc, control_signed,
-                        samples, signed_pairs, **extra_cast)
+        signed_pairs = [(u, v) for u, v in self.type_pairs if u.signed and v.signed]
+        self.run_binary(pyfunc, control_signed, samples, signed_pairs, **extra_cast)
 
     def test_truediv(self):
-
         def control(a, b):
             return float(a) / float(b)
+
         samples = [x for x in self.int_samples if x != 0]
         pyfunc = self.op.truediv_usecase
 
         # Note: there can be precision issues on x87
         # e.g. for `1 / 18446744073709541616`
         # -> 0x1.0000000000002p-64 vs. 0x1.0000000000003p-64.
-        self.run_binary(pyfunc, control, samples, self.signed_pairs,
-                        expected_type=float, prec='double')
-        self.run_binary(pyfunc, control, samples, self.unsigned_pairs,
-                        expected_type=float, prec='double')
+        self.run_binary(
+            pyfunc,
+            control,
+            samples,
+            self.signed_pairs,
+            expected_type=float,
+            prec="double",
+        )
+        self.run_binary(
+            pyfunc,
+            control,
+            samples,
+            self.unsigned_pairs,
+            expected_type=float,
+            prec="double",
+        )
 
     def test_and(self):
-        self.run_arith_binop(self.op.bitwise_and_usecase, 'and_', self.int_samples)
+        self.run_arith_binop(self.op.bitwise_and_usecase, "and_", self.int_samples)
 
     def test_or(self):
-        self.run_arith_binop(self.op.bitwise_or_usecase, 'or_', self.int_samples)
+        self.run_arith_binop(self.op.bitwise_or_usecase, "or_", self.int_samples)
 
     def test_xor(self):
-        self.run_arith_binop(self.op.bitwise_xor_usecase, 'xor', self.int_samples)
+        self.run_arith_binop(self.op.bitwise_xor_usecase, "xor", self.int_samples)
 
     def run_shift_binop(self, pyfunc, opname):
         opfunc = getattr(operator, opname)
+
         def control_signed(a, b):
             tp = self.get_numpy_signed_upcast(a, b)
             return opfunc(tp(a), tp(b))
+
         def control_unsigned(a, b):
             tp = self.get_numpy_unsigned_upcast(a, b)
             return opfunc(tp(a), tp(b))
@@ -1378,23 +1434,22 @@ class TestMixedInts(TestCase):
                 # we would hit undefined behaviour.
                 maxshift = xt.bitwidth - 1
                 for y in (0, 1, 3, 5, maxshift - 1, maxshift):
-                    if not self.int_in_dtype_range(x, xt) or not self.int_in_dtype_range(y, yt):
+                    if not self.int_in_dtype_range(
+                        x, xt
+                    ) or not self.int_in_dtype_range(y, yt):
                         continue
                     # Get Numpy typed scalars for the given types and values
                     x = self.get_typed_int(xt, x)
                     y = self.get_typed_int(yt, y)
                     expected = control_func(x, y)
                     got = cfunc(x, y)
-                    msg = ("mismatch for (%r, %r) with types %s"
-                           % (x, y, (xt, yt)))
+                    msg = "mismatch for (%r, %r) with types %s" % (x, y, (xt, yt))
                     self.assertPreciseEqual(got, expected, msg=msg)
 
         # For bitshifts, only the first operand's signedness matters
         # to choose the operation's signedness.
-        signed_pairs = [(u, v) for u, v in self.type_pairs
-                        if u.signed]
-        unsigned_pairs = [(u, v) for u, v in self.type_pairs
-                          if not u.signed]
+        signed_pairs = [(u, v) for u, v in self.type_pairs if u.signed]
+        unsigned_pairs = [(u, v) for u, v in self.type_pairs if not u.signed]
 
         for xt, yt in signed_pairs:
             check(xt, yt, control_signed)
@@ -1402,14 +1457,15 @@ class TestMixedInts(TestCase):
             check(xt, yt, control_unsigned)
 
     def test_lshift(self):
-        self.run_shift_binop(self.op.bitshift_left_usecase, 'lshift')
+        self.run_shift_binop(self.op.bitshift_left_usecase, "lshift")
 
     def test_rshift(self):
-        self.run_shift_binop(self.op.bitshift_right_usecase, 'rshift')
+        self.run_shift_binop(self.op.bitshift_right_usecase, "rshift")
 
     def test_unary_positive(self):
         def control(a):
             return a
+
         samples = self.int_samples
         pyfunc = self.op.unary_positive_usecase
 
@@ -1419,9 +1475,11 @@ class TestMixedInts(TestCase):
         def control_signed(a):
             tp = self.get_numpy_signed_upcast(a)
             return tp(-a)
+
         def control_unsigned(a):
             tp = self.get_numpy_unsigned_upcast(a)
             return tp(-a)
+
         samples = self.int_samples
         pyfunc = self.op.negate_usecase
 
@@ -1432,9 +1490,11 @@ class TestMixedInts(TestCase):
         def control_signed(a):
             tp = self.get_numpy_signed_upcast(a)
             return tp(~a)
+
         def control_unsigned(a):
             tp = self.get_numpy_unsigned_upcast(a)
             return tp(~a)
+
         samples = self.int_samples
         pyfunc = self.op.bitwise_not_usecase
 
@@ -1443,7 +1503,6 @@ class TestMixedInts(TestCase):
 
 
 class TestMixedIntsOperatorModule(TestMixedInts):
-
     op = FunctionalOperatorImpl
 
 
@@ -1469,7 +1528,7 @@ class TestStaticPower(TestCase):
                         static_cfunc(v)
                 else:
                     got = static_cfunc(v)
-                    self.assertPreciseEqual(expected, got, prec='double')
+                    self.assertPreciseEqual(expected, got, prec="double")
 
     def test_int_values(self):
         exponents = [1, 2, 3, 5, 17, 0, -1, -2, -3]
@@ -1479,22 +1538,24 @@ class TestStaticPower(TestCase):
 
     def test_real_values(self):
         exponents = [1, 2, 3, 5, 17, 0, -1, -2, -3, 0x111111, -0x111112]
-        vals = [1.5, 3.25, -1.25, np.float32(-2.0), float('inf'), float('nan')]
+        vals = [1.5, 3.25, -1.25, np.float32(-2.0), float("inf"), float("nan")]
 
         self._check_pow(exponents, vals)
+
 
 class TestStringConstComparison(TestCase):
     """
     Test comparison of string constants
     """
+
     def test_eq(self):
         def test_impl1():
-            s = 'test'
-            return s == 'test'
+            s = "test"
+            return s == "test"
 
         def test_impl2():
-            s = 'test1'
-            return s == 'test'
+            s = "test1"
+            return s == "test"
 
         cfunc1 = jit(nopython=True)(test_impl1)
         cfunc2 = jit(nopython=True)(test_impl2)
@@ -1503,24 +1564,25 @@ class TestStringConstComparison(TestCase):
 
     def test_neq(self):
         def test_impl1():
-            s = 'test'
-            return s != 'test'
+            s = "test"
+            return s != "test"
 
         def test_impl2():
-            s = 'test1'
-            return s != 'test'
+            s = "test1"
+            return s != "test"
 
         cfunc1 = jit(nopython=True)(test_impl1)
         cfunc2 = jit(nopython=True)(test_impl2)
         self.assertEqual(test_impl1(), cfunc1())
         self.assertEqual(test_impl2(), cfunc2())
 
+
 class TestBooleanLiteralOperators(TestCase):
     """
     Test operators with Boolean constants
     """
-    def test_eq(self):
 
+    def test_eq(self):
         def test_impl1(b):
             return a_val == b
 
@@ -1546,7 +1608,6 @@ class TestBooleanLiteralOperators(TestCase):
         self.assertEqual(test_impl3(), cfunc3())
 
     def test_ne(self):
-
         def test_impl1(b):
             return a_val != b
 
@@ -1572,7 +1633,6 @@ class TestBooleanLiteralOperators(TestCase):
         self.assertEqual(test_impl3(), cfunc3())
 
     def test_is(self):
-
         def test_impl1(b):
             return a_val is b
 
@@ -1591,7 +1651,6 @@ class TestBooleanLiteralOperators(TestCase):
         self.assertEqual(test_impl2(), cfunc2())
 
     def test_not(self):
-
         def test_impl():
             a, b = False, True
             return (not a, not b)
@@ -1600,7 +1659,6 @@ class TestBooleanLiteralOperators(TestCase):
         self.assertEqual(test_impl(), cfunc())
 
     def test_bool(self):
-
         def test_impl():
             a, b = False, True
             return (bool(a), bool(b))
@@ -1609,7 +1667,6 @@ class TestBooleanLiteralOperators(TestCase):
         self.assertEqual(test_impl(), cfunc())
 
     def test_bool_to_str(self):
-
         def test_impl():
             a, b = False, True
             return (str(a), str(b))
@@ -1618,5 +1675,5 @@ class TestBooleanLiteralOperators(TestCase):
         self.assertEqual(test_impl(), cfunc())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

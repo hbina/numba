@@ -65,6 +65,7 @@ class TestCudaSlicing(CUDATestCase):
         # Compile the "assign slice from array" path, it will fail, but only
         # when it tries to do code generation for a potential array copy.
         with self.assertRaises(errors.NumbaRuntimeError) as raises:
+
             @cuda.jit("void(f4[:, :, :], f4[:], i4, i4)")
             def check_array_setslice(tmp, value, a, b):
                 tmp[a, b] = value
@@ -73,5 +74,5 @@ class TestCudaSlicing(CUDATestCase):
         self.assertIn(msg, str(raises.exception))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

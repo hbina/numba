@@ -26,3 +26,7 @@ htmlcov/
 __pycache__/
 
 docs/source/developer/autogen*
+
+*.txt
+*.egg/
+env/

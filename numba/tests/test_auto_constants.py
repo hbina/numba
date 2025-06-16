@@ -10,7 +10,6 @@ import unittest
 
 class TestAutoConstants(unittest.TestCase):
     def test_numpy_nan(self):
-
         @njit
         def f():
             return np.nan
@@ -19,7 +18,6 @@ class TestAutoConstants(unittest.TestCase):
         self.assertTrue(math.isnan(f.py_func()))
 
     def test_sys_constant(self):
-
         @njit
         def f():
             return sys.hexversion
@@ -27,12 +25,12 @@ class TestAutoConstants(unittest.TestCase):
         self.assertEqual(f(), f.py_func())
 
     def test_module_string_constant(self):
-
         @njit
         def f():
             return uc._GLOBAL_STR
+
         self.assertEqual(f(), f.py_func())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
