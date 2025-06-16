@@ -95,6 +95,12 @@ class CPUContext(BaseContext):
         self.install_registry(randomimpl.registry)
         self.install_registry(jitclassimpl.class_impl_registry)
 
+        # Add CPU atomic operations
+        from numba.core.typing import cpu_atomic_decl  # noqa F401
+        from numba.core import cpu_atomic_impl  # noqa F401
+
+        self.install_registry(cpu_atomic_impl.registry)
+
         # load 3rd party extensions
         numba.core.entrypoints.init_all()
 
