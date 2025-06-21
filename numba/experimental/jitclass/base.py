@@ -157,7 +157,7 @@ def _add_linking_libs(context, call):
         context.add_linking_libs(libs)
 
 
-def register_class_type(cls, spec, class_ctor, builder):
+def register_class_type(cls, spec, class_ctor, builder, cache=False):
     """
     Internal function to create a jitclass.
 
@@ -167,6 +167,7 @@ def register_class_type(cls, spec, class_ctor, builder):
     spec: the structural specification contains the field types.
     class_ctor: the numba type to represent the jitclass
     builder: the internal jitclass builder
+    cache: whether to enable caching for this jitclass
     """
     # Normalize spec
     if spec is None:
@@ -216,6 +217,15 @@ def register_class_type(cls, spec, class_ctor, builder):
         if v.fdel is not None:
             raise TypeError("deleter is not supported: {0}".format(k))
 
+    # Try to load from cache if enabled
+    if cache:
+        from numba.experimental.jitclass.caching import JitClassCache
+        jit_cache = JitClassCache(cls)
+        cached_data = jit_cache.load_class(spec, methods, props, static_methods)
+        if cached_data is not None:
+            # Cache hit - reconstruct class from cache
+            return _rebuild_class_from_cache(cached_data, cls)
+
     jit_methods = {k: njit(v) for k, v in methods.items()}
 
     jit_props = {}
@@ -252,6 +262,88 @@ def register_class_type(cls, spec, class_ctor, builder):
     builder(class_type, typingctx, targetctx).register()
     as_numba_type.register(cls, class_type.instance_type)
 
+    # Save to cache if enabled
+    if cache:
+        try:
+            # Collect method compile results
+            method_compile_results = {}
+            for name, jit_method in jit_methods.items():
+                # Get compilation results from dispatcher
+                if hasattr(jit_method, '_cache'):
+                    method_compile_results[name] = jit_method._cache
+            
+            # TODO: Collect boxing data
+            boxing_data = {}
+            
+            jit_cache.save_class(
+                spec, methods, props, static_methods,
+                class_type, method_compile_results, boxing_data
+            )
+        except Exception:
+            # Don't fail if caching fails
+            import warnings
+            warnings.warn("Failed to cache jitclass, continuing without cache")
+
+    return cls
+
+
+def _rebuild_class_from_cache(cached_data, original_cls):
+    """
+    Rebuild a jitclass from cached compilation data.
+    
+    This function reconstructs the class type, registers it globally,
+    and returns the compiled class object.
+    """
+    # Extract cached data
+    spec = cached_data.spec
+    methods = cached_data.methods
+    properties = cached_data.properties
+    static_methods = cached_data.static_methods
+    class_type = cached_data.class_type
+    method_compile_results = cached_data.method_compile_results
+    boxing_data = cached_data.boxing_data
+    
+    # Recreate JIT methods from cache
+    jit_methods = {}
+    for name, method in methods.items():
+        jit_method = njit(method)
+        # Restore cached compilation results if available
+        if name in method_compile_results:
+            jit_method._cache = method_compile_results[name]
+        jit_methods[name] = jit_method
+    
+    # Recreate JIT properties
+    jit_props = {}
+    for k, v in properties.items():
+        dct = {}
+        if v.fget:
+            dct['get'] = njit(v.fget)
+        if v.fset:
+            dct['set'] = njit(v.fset)
+        jit_props[k] = dct
+    
+    # Recreate JIT static methods
+    jit_static_methods = {
+        k: njit(v.__func__) for k, v in static_methods.items()
+    }
+    
+    # Recreate class dictionary
+    docstring = getattr(original_cls, '__doc__', "")
+    jit_class_dct = dict(class_type=class_type, __doc__=docstring)
+    jit_class_dct.update(jit_static_methods)
+    cls = JitClassType(original_cls.__name__, (original_cls,), jit_class_dct)
+    
+    # Register resolution of the class object
+    typingctx = cpu_target.typing_context
+    typingctx.insert_global(cls, class_type)
+    
+    # Register class
+    targetctx = cpu_target.target_context
+    # Use ClassBuilder to register - need to import it
+    from numba.experimental.jitclass.base import ClassBuilder
+    ClassBuilder(class_type, typingctx, targetctx).register()
+    as_numba_type.register(cls, class_type.instance_type)
+    
     return cls
 
 

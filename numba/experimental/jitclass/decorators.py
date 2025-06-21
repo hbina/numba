@@ -1,7 +1,7 @@
 from numba.core import types, config
 
 
-def jitclass(cls_or_spec=None, spec=None):
+def jitclass(cls_or_spec=None, spec=None, cache=False):
     """
     A function for creating a jitclass.
     Can be used as a decorator or function.
@@ -16,6 +16,10 @@ def jitclass(cls_or_spec=None, spec=None):
     Any class annotations for field names not listed in spec will be added.
     For class annotation `x: T` we will append ``("x", as_numba_type(T))`` to
     the spec if ``x`` is not already a key in spec.
+    
+    The ``cache`` parameter enables caching of the compiled class. When True,
+    the compiled class definition is cached to disk and reused on subsequent
+    imports, improving startup time for repeated use of the same jitclass.
 
 
     Examples
@@ -75,7 +79,7 @@ def jitclass(cls_or_spec=None, spec=None):
             from numba.experimental.jitclass.base import (register_class_type,
                                                           ClassBuilder)
             cls_jitted = register_class_type(cls, spec, types.ClassType,
-                                             ClassBuilder)
+                                             ClassBuilder, cache=cache)
 
             # Preserve the module name of the original class
             cls_jitted.__module__ = cls.__module__
