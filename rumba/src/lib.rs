@@ -11,6 +11,7 @@ mod frontend;
 mod ir;
 mod runtime;
 mod types;
+mod typing;
 
 use pyo3::prelude::*;
 

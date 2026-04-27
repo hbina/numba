@@ -7,14 +7,14 @@ use crate::errors::unsupported;
 use crate::frontend::bytecode::{build_rumba_ast, inspect_bytecode};
 use crate::frontend::parse_function_input;
 use crate::runtime::call_native;
-use crate::types::{parse_signature_tuple, signature_tuple, ScalarType};
+use crate::types::{parse_signature_tuple, signature_tuple, RumbaType};
 
 #[pyclass]
 pub(crate) struct Dispatcher {
     py_func: Py<PyAny>,
     cache: bool,
     debug: bool,
-    explicit_signature: Option<Vec<ScalarType>>,
+    explicit_signature: Option<Vec<RumbaType>>,
     compiled: Vec<CompiledArtifact>,
 }
 
@@ -75,7 +75,7 @@ impl Dispatcher {
             Some(signature) => signature.clone(),
             None => args
                 .iter()
-                .map(|arg| ScalarType::from_arg(&arg))
+                .map(|arg| RumbaType::from_arg(&arg))
                 .collect::<PyResult<Vec<_>>>()?,
         };
         if signature.len() != args.len() {
@@ -107,21 +107,49 @@ impl Dispatcher {
 
     #[pyo3(signature = (signature=None))]
     fn inspect_c(&self, signature: Option<&Bound<'_, PyTuple>>) -> PyResult<String> {
+        Ok(self.select_artifact(signature)?.source.clone())
+    }
+
+    #[pyo3(signature = (signature=None))]
+    fn inspect_compile_command(
+        &self,
+        signature: Option<&Bound<'_, PyTuple>>,
+    ) -> PyResult<Vec<String>> {
+        Ok(self.select_artifact(signature)?.compile_command.clone())
+    }
+
+    #[pyo3(signature = (signature=None))]
+    fn inspect_cache_path(&self, signature: Option<&Bound<'_, PyTuple>>) -> PyResult<String> {
+        Ok(self
+            .select_artifact(signature)?
+            .cache_path
+            .display()
+            .to_string())
+    }
+}
+
+impl Dispatcher {
+    fn select_artifact(
+        &self,
+        signature: Option<&Bound<'_, PyTuple>>,
+    ) -> PyResult<&CompiledArtifact> {
         if let Some(signature) = signature {
             let signature = parse_signature_tuple(signature)?;
             return self
                 .compiled
                 .iter()
                 .find(|artifact| artifact.signature == signature)
-                .map(|artifact| artifact.source.clone())
                 .ok_or_else(|| unsupported("signature has not been compiled"));
         }
-        if self.compiled.len() != 1 {
-            return Err(unsupported(
-                "inspect_c requires a signature before compilation",
-            ));
+        match self.compiled.len() {
+            1 => Ok(&self.compiled[0]),
+            0 => Err(unsupported(
+                "inspection requires a signature before compilation",
+            )),
+            _ => Err(unsupported(
+                "inspection requires a signature after multiple signatures have been compiled",
+            )),
         }
-        Ok(self.compiled[0].source.clone())
     }
 }
 
@@ -130,7 +158,7 @@ impl Dispatcher {
         py_func: Py<PyAny>,
         cache: bool,
         debug: bool,
-        explicit_signature: Option<Vec<ScalarType>>,
+        explicit_signature: Option<Vec<RumbaType>>,
     ) -> Self {
         Self {
             py_func,
@@ -141,7 +169,7 @@ impl Dispatcher {
         }
     }
 
-    fn compile_if_needed(&mut self, py: Python<'_>, signature: &[ScalarType]) -> PyResult<usize> {
+    fn compile_if_needed(&mut self, py: Python<'_>, signature: &[RumbaType]) -> PyResult<usize> {
         if let Some(index) = self
             .compiled
             .iter()

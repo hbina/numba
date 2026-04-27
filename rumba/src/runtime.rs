@@ -3,52 +3,314 @@ use pyo3::types::PyTuple;
 
 use crate::artifact::CompiledArtifact;
 use crate::errors::{compilation, unsupported};
-use crate::types::ScalarType;
+use crate::types::{RumbaType, ScalarType};
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ArrayI64View {
+    data: *mut i64,
+    len: i64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ArrayF64View {
+    data: *mut f64,
+    len: i64,
+}
+
+#[derive(Clone, Copy)]
+enum NativeArg {
+    I64(i64),
+    F64(f64),
+    Bool(bool),
+    ArrayI64(ArrayI64View),
+    ArrayF64(ArrayF64View),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AbiKind {
+    I64,
+    F64,
+    Bool,
+    ArrayI64,
+    ArrayF64,
+}
 
 pub(crate) fn call_native(
     py: Python<'_>,
     artifact: &CompiledArtifact,
     args: &Bound<'_, PyTuple>,
 ) -> PyResult<PyObject> {
-    match (artifact.return_type, artifact.signature.as_slice()) {
-        (ScalarType::Int64, [ScalarType::Int64, ScalarType::Int64]) => unsafe {
-            let func: libloading::Symbol<unsafe extern "C" fn(i64, i64) -> i64> =
+    let prepared = artifact
+        .signature
+        .iter()
+        .zip(args.iter())
+        .map(|(typ, arg)| prepare_arg(typ, &arg, artifact.requires_writable_arrays))
+        .collect::<PyResult<Vec<_>>>()?;
+    let kinds = artifact
+        .signature
+        .iter()
+        .map(abi_kind)
+        .collect::<PyResult<Vec<_>>>()?;
+
+    unsafe {
+        match artifact.return_type {
+            ScalarType::Int64 => {
+                call_i64(artifact, &kinds, &prepared).map(|value| value.into_py(py))
+            }
+            ScalarType::Float64 => {
+                call_f64(artifact, &kinds, &prepared).map(|value| value.into_py(py))
+            }
+            ScalarType::Bool => {
+                call_bool(artifact, &kinds, &prepared).map(|value| value.into_py(py))
+            }
+        }
+    }
+}
+
+unsafe fn call_i64(
+    artifact: &CompiledArtifact,
+    kinds: &[AbiKind],
+    args: &[NativeArg],
+) -> PyResult<i64> {
+    match kinds {
+        [AbiKind::I64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(i64) -> i64> =
                 artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(func(args.get_item(0)?.extract()?, args.get_item(1)?.extract()?).into_py(py))
-        },
-        (ScalarType::Float64, [ScalarType::Float64, ScalarType::Float64]) => unsafe {
-            let func: libloading::Symbol<unsafe extern "C" fn(f64, f64) -> f64> =
+            Ok(f(arg_i64(args, 0)))
+        }
+        [AbiKind::Bool] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(bool) -> i64> =
                 artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(func(args.get_item(0)?.extract()?, args.get_item(1)?.extract()?).into_py(py))
-        },
-        (ScalarType::Int64, [ScalarType::Int64]) => unsafe {
-            let func: libloading::Symbol<unsafe extern "C" fn(i64) -> i64> =
+            Ok(f(arg_bool(args, 0)))
+        }
+        [AbiKind::ArrayI64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View) -> i64> =
                 artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(func(args.get_item(0)?.extract()?).into_py(py))
-        },
-        (ScalarType::Float64, [ScalarType::Float64]) => unsafe {
-            let func: libloading::Symbol<unsafe extern "C" fn(f64) -> f64> =
+            Ok(f(arg_array_i64(args, 0)))
+        }
+        [AbiKind::ArrayF64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View) -> i64> =
                 artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(func(args.get_item(0)?.extract()?).into_py(py))
-        },
-        (ScalarType::Bool, [ScalarType::Bool]) => unsafe {
-            let func: libloading::Symbol<unsafe extern "C" fn(bool) -> bool> =
+            Ok(f(arg_array_f64(args, 0)))
+        }
+        [AbiKind::I64, AbiKind::I64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(i64, i64) -> i64> =
                 artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(func(args.get_item(0)?.extract()?).into_py(py))
-        },
-        (ScalarType::Int64, [ScalarType::Int64, ScalarType::Int64, ScalarType::Int64]) => unsafe {
-            let func: libloading::Symbol<unsafe extern "C" fn(i64, i64, i64) -> i64> =
+            Ok(f(arg_i64(args, 0), arg_i64(args, 1)))
+        }
+        [AbiKind::ArrayI64, AbiKind::I64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, i64) -> i64> =
                 artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(func(
-                args.get_item(0)?.extract()?,
-                args.get_item(1)?.extract()?,
-                args.get_item(2)?.extract()?,
-            )
-            .into_py(py))
-        },
+            Ok(f(arg_array_i64(args, 0), arg_i64(args, 1)))
+        }
+        [AbiKind::I64, AbiKind::ArrayI64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(i64, ArrayI64View) -> i64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_i64(args, 0), arg_array_i64(args, 1)))
+        }
+        [AbiKind::I64, AbiKind::I64, AbiKind::I64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(i64, i64, i64) -> i64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_i64(args, 0), arg_i64(args, 1), arg_i64(args, 2)))
+        }
         _ => Err(unsupported(
-            "native invocation currently supports homogeneous scalar signatures up to three arguments",
+            "native invocation does not support this signature",
         )),
+    }
+}
+
+unsafe fn call_f64(
+    artifact: &CompiledArtifact,
+    kinds: &[AbiKind],
+    args: &[NativeArg],
+) -> PyResult<f64> {
+    match kinds {
+        [AbiKind::F64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(f64) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_f64(args, 0)))
+        }
+        [AbiKind::ArrayF64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_f64(args, 0)))
+        }
+        [AbiKind::F64, AbiKind::F64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(f64, f64) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_f64(args, 0), arg_f64(args, 1)))
+        }
+        [AbiKind::ArrayF64, AbiKind::I64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, i64) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_f64(args, 0), arg_i64(args, 1)))
+        }
+        [AbiKind::ArrayF64, AbiKind::F64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, f64) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_f64(args, 0), arg_f64(args, 1)))
+        }
+        [AbiKind::F64, AbiKind::ArrayF64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(f64, ArrayF64View) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_f64(args, 0), arg_array_f64(args, 1)))
+        }
+        [AbiKind::F64, AbiKind::F64, AbiKind::F64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(f64, f64, f64) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_f64(args, 0), arg_f64(args, 1), arg_f64(args, 2)))
+        }
+        _ => Err(unsupported(
+            "native invocation does not support this signature",
+        )),
+    }
+}
+
+unsafe fn call_bool(
+    artifact: &CompiledArtifact,
+    kinds: &[AbiKind],
+    args: &[NativeArg],
+) -> PyResult<bool> {
+    match kinds {
+        [AbiKind::Bool] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(bool) -> bool> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_bool(args, 0)))
+        }
+        [AbiKind::I64, AbiKind::I64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(i64, i64) -> bool> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_i64(args, 0), arg_i64(args, 1)))
+        }
+        [AbiKind::F64, AbiKind::F64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(f64, f64) -> bool> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_f64(args, 0), arg_f64(args, 1)))
+        }
+        _ => Err(unsupported(
+            "native invocation does not support this signature",
+        )),
+    }
+}
+
+fn prepare_arg(
+    typ: &RumbaType,
+    arg: &Bound<'_, PyAny>,
+    require_writable_array: bool,
+) -> PyResult<NativeArg> {
+    match typ {
+        RumbaType::Scalar(ScalarType::Int64) => Ok(NativeArg::I64(arg.extract()?)),
+        RumbaType::Scalar(ScalarType::Float64) => Ok(NativeArg::F64(arg.extract()?)),
+        RumbaType::Scalar(ScalarType::Bool) => Ok(NativeArg::Bool(arg.extract()?)),
+        RumbaType::Array1D(ScalarType::Int64) => {
+            let (data, len) = validate_array(arg, "int64", require_writable_array)?;
+            Ok(NativeArg::ArrayI64(ArrayI64View {
+                data: data as *mut i64,
+                len,
+            }))
+        }
+        RumbaType::Array1D(ScalarType::Float64) => {
+            let (data, len) = validate_array(arg, "float64", require_writable_array)?;
+            Ok(NativeArg::ArrayF64(ArrayF64View {
+                data: data as *mut f64,
+                len,
+            }))
+        }
+        RumbaType::Array1D(ScalarType::Bool) => Err(unsupported("bool arrays are not supported")),
+    }
+}
+
+fn abi_kind(typ: &RumbaType) -> PyResult<AbiKind> {
+    match typ {
+        RumbaType::Scalar(ScalarType::Int64) => Ok(AbiKind::I64),
+        RumbaType::Scalar(ScalarType::Float64) => Ok(AbiKind::F64),
+        RumbaType::Scalar(ScalarType::Bool) => Ok(AbiKind::Bool),
+        RumbaType::Array1D(ScalarType::Int64) => Ok(AbiKind::ArrayI64),
+        RumbaType::Array1D(ScalarType::Float64) => Ok(AbiKind::ArrayF64),
+        RumbaType::Array1D(ScalarType::Bool) => Err(unsupported("bool arrays are not supported")),
+    }
+}
+
+fn validate_array(
+    arg: &Bound<'_, PyAny>,
+    expected_dtype: &str,
+    require_writable: bool,
+) -> PyResult<(*mut std::ffi::c_void, i64)> {
+    let py = arg.py();
+    let numpy = py
+        .import_bound("numpy")
+        .map_err(|_| unsupported("numpy is required for array arguments"))?;
+    let ndarray = numpy.getattr("ndarray")?;
+    if !arg.is_instance(&ndarray)? {
+        return Err(unsupported(
+            "array arguments must be numpy.ndarray instances",
+        ));
+    }
+    let ndim: i64 = arg.getattr("ndim")?.extract()?;
+    if ndim != 1 {
+        return Err(unsupported("only 1D numpy arrays are supported"));
+    }
+    let dtype = arg.getattr("dtype")?.str()?.to_str()?.to_string();
+    if dtype != expected_dtype {
+        return Err(unsupported(format!(
+            "compiled signature expects numpy dtype {expected_dtype}, got {dtype}"
+        )));
+    }
+    let flags = arg.getattr("flags")?;
+    let c_contiguous: bool = flags.getattr("c_contiguous")?.extract()?;
+    let aligned: bool = flags.getattr("aligned")?.extract()?;
+    if !c_contiguous || !aligned {
+        return Err(unsupported(
+            "only C-contiguous aligned numpy arrays are supported",
+        ));
+    }
+    if require_writable {
+        let writeable: bool = flags.getattr("writeable")?.extract()?;
+        if !writeable {
+            return Err(unsupported(
+                "read-only numpy arrays cannot be passed to functions that assign array elements",
+            ));
+        }
+    }
+    let len: i64 = arg.call_method0("__len__")?.extract()?;
+    let data = arg.getattr("ctypes")?.getattr("data")?.extract::<usize>()?;
+    Ok((data as *mut std::ffi::c_void, len))
+}
+
+fn arg_i64(args: &[NativeArg], index: usize) -> i64 {
+    match args[index] {
+        NativeArg::I64(value) => value,
+        _ => unreachable!(),
+    }
+}
+
+fn arg_f64(args: &[NativeArg], index: usize) -> f64 {
+    match args[index] {
+        NativeArg::F64(value) => value,
+        _ => unreachable!(),
+    }
+}
+
+fn arg_bool(args: &[NativeArg], index: usize) -> bool {
+    match args[index] {
+        NativeArg::Bool(value) => value,
+        _ => unreachable!(),
+    }
+}
+
+fn arg_array_i64(args: &[NativeArg], index: usize) -> ArrayI64View {
+    match args[index] {
+        NativeArg::ArrayI64(value) => value,
+        _ => unreachable!(),
+    }
+}
+
+fn arg_array_f64(args: &[NativeArg], index: usize) -> ArrayF64View {
+    match args[index] {
+        NativeArg::ArrayF64(value) => value,
+        _ => unreachable!(),
     }
 }
 

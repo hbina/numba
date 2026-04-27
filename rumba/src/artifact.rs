@@ -4,14 +4,16 @@ use std::sync::Arc;
 use libloading::Library;
 use pyo3::prelude::*;
 
-use crate::types::ScalarType;
+use crate::types::{RumbaType, ScalarType};
 
 #[derive(Clone)]
 pub(crate) struct CompiledArtifact {
     pub(crate) key: String,
-    pub(crate) signature: Vec<ScalarType>,
+    pub(crate) signature: Vec<RumbaType>,
     pub(crate) return_type: ScalarType,
+    pub(crate) requires_writable_arrays: bool,
     pub(crate) source: String,
+    pub(crate) cache_path: PathBuf,
     pub(crate) library_path: PathBuf,
     pub(crate) compile_command: Vec<String>,
     pub(crate) library: Arc<Library>,
@@ -32,6 +34,11 @@ impl PyCompiledArtifact {
     #[getter]
     fn library_path(&self) -> String {
         self.inner.library_path.display().to_string()
+    }
+
+    #[getter]
+    fn cache_path(&self) -> String {
+        self.inner.cache_path.display().to_string()
     }
 
     #[getter]

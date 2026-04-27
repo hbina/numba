@@ -1,10 +1,10 @@
 use std::fmt::Write as _;
 
 use crate::frontend::CodeMetadata;
-use crate::types::ScalarType;
+use crate::types::RumbaType;
 use crate::VERSION;
 
-pub(crate) fn cache_key(metadata: &CodeMetadata, signature: &[ScalarType], source: &str) -> String {
+pub(crate) fn cache_key(metadata: &CodeMetadata, signature: &[RumbaType], source: &str) -> String {
     let mut payload = String::new();
     write!(&mut payload, "bytecode={:x?};", metadata.bytecode)
         .expect("write to String cannot fail");
@@ -16,7 +16,7 @@ pub(crate) fn cache_key(metadata: &CodeMetadata, signature: &[ScalarType], sourc
     .expect("write to String cannot fail");
     payload.push_str("signature=");
     for typ in signature {
-        payload.push_str(typ.name());
+        payload.push_str(&typ.name());
         payload.push(',');
     }
     payload.push_str(";source=");

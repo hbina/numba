@@ -37,14 +37,22 @@ pub(crate) struct BytecodeInstruction {
 pub(crate) enum Opcode {
     LoadConst,
     LoadFast,
+    LoadFastCheck,
     StoreFast,
     LoadGlobal,
+    LoadAttr,
+    BinarySubscr,
+    StoreSubscr,
+    BinarySlice,
+    StoreSlice,
+    BuildTuple,
     BinaryOp,
     UnaryPositive,
     UnaryNegative,
     UnaryNot,
     CompareOp,
     ReturnValue,
+    ReturnConst,
     PopJumpIfFalse,
     PopJumpIfTrue,
     JumpForward,
@@ -217,10 +225,16 @@ impl<'a> BytecodeParser<'a> {
             let inst = &self.code.instructions[index];
             match inst.opcode {
                 Opcode::LoadConst => stack.push(StackValue::Expr(self.const_expr(inst)?)),
-                Opcode::LoadFast => {
+                Opcode::LoadFast | Opcode::LoadFastCheck => {
                     stack.push(StackValue::Expr(ExprNode::Name(self.local_name(inst)?)))
                 }
                 Opcode::LoadGlobal => stack.push(StackValue::Name(self.name_operand(inst)?)),
+                Opcode::LoadAttr => {
+                    return Err(unsupported(format!(
+                        "attribute access .{} is not supported",
+                        self.name_operand(inst)?
+                    )));
+                }
                 Opcode::StoreFast => {
                     let name = self.local_name(inst)?;
                     let value = pop_stack(&mut stack)?;
@@ -239,6 +253,30 @@ impl<'a> BytecodeParser<'a> {
                             right: Box::new(right),
                         }));
                     }
+                }
+                Opcode::BinarySubscr => {
+                    let index_expr = pop_expr(&mut stack)?;
+                    let target = pop_expr(&mut stack)?;
+                    stack.push(StackValue::Expr(ExprNode::Index {
+                        target: Box::new(target),
+                        index: Box::new(index_expr),
+                    }));
+                }
+                Opcode::StoreSubscr => {
+                    let index_expr = pop_expr(&mut stack)?;
+                    let target = pop_expr(&mut stack)?;
+                    let value = pop_expr(&mut stack)?;
+                    statements.push(StmtNode::StoreIndex {
+                        target,
+                        index: index_expr,
+                        value,
+                    });
+                }
+                Opcode::BinarySlice | Opcode::StoreSlice => {
+                    return Err(unsupported("array slicing is not supported"));
+                }
+                Opcode::BuildTuple => {
+                    return Err(unsupported("tuple indexing is not supported"));
                 }
                 Opcode::UnaryPositive => {
                     let value = pop_expr(&mut stack)?;
@@ -280,6 +318,14 @@ impl<'a> BytecodeParser<'a> {
                     match pop_stack(&mut stack)? {
                         StackValue::Name(name) if name == "range" => {
                             stack.push(StackValue::CallRange(args));
+                        }
+                        StackValue::Name(name) if name == "len" => {
+                            if args.len() != 1 {
+                                return Err(unsupported("len expects one argument"));
+                            }
+                            stack.push(StackValue::Expr(ExprNode::Len(Box::new(
+                                args.into_iter().next().unwrap(),
+                            ))));
                         }
                         StackValue::Name(name) => {
                             let function = self.resolve_global_function(&name)?;
@@ -380,6 +426,10 @@ impl<'a> BytecodeParser<'a> {
                 }
                 Opcode::ReturnValue => {
                     statements.push(StmtNode::Return(pop_expr(&mut stack)?));
+                    return Ok((statements, index + 1));
+                }
+                Opcode::ReturnConst => {
+                    statements.push(StmtNode::Return(self.const_expr(inst)?));
                     return Ok((statements, index + 1));
                 }
                 Opcode::JumpForward | Opcode::JumpBackward => return Ok((statements, index)),
@@ -606,18 +656,26 @@ fn opcode_from_raw(opcode: u16) -> Opcode {
         10 => Opcode::UnaryPositive,
         11 => Opcode::UnaryNegative,
         12 => Opcode::UnaryNot,
+        25 => Opcode::BinarySubscr,
+        26 => Opcode::BinarySlice,
+        27 => Opcode::StoreSlice,
+        60 => Opcode::StoreSubscr,
         68 => Opcode::GetIter,
         83 => Opcode::ReturnValue,
         93 => Opcode::ForIter,
         100 => Opcode::LoadConst,
+        102 => Opcode::BuildTuple,
+        106 => Opcode::LoadAttr,
         107 => Opcode::CompareOp,
         110 => Opcode::JumpForward,
         114 => Opcode::PopJumpIfFalse,
         115 => Opcode::PopJumpIfTrue,
         116 => Opcode::LoadGlobal,
+        121 => Opcode::ReturnConst,
         122 => Opcode::BinaryOp,
         124 => Opcode::LoadFast,
         125 => Opcode::StoreFast,
+        127 => Opcode::LoadFastCheck,
         134 | 140 => Opcode::JumpBackward,
         171 => Opcode::Call,
         other => Opcode::Unsupported(other),
@@ -626,7 +684,8 @@ fn opcode_from_raw(opcode: u16) -> Opcode {
 
 fn inline_cache_entries(opcode: Opcode) -> usize {
     match opcode {
-        Opcode::BinaryOp | Opcode::CompareOp | Opcode::ForIter => 1,
+        Opcode::BinaryOp | Opcode::CompareOp | Opcode::ForIter | Opcode::BinarySubscr => 1,
+        Opcode::LoadAttr => 9,
         Opcode::LoadGlobal => 4,
         Opcode::Call => 3,
         _ => 0,
@@ -643,8 +702,8 @@ fn operand_repr(
     let arg = arg? as usize;
     match opcode {
         Opcode::LoadConst => consts.get(arg).map(Constant::repr),
-        Opcode::LoadFast | Opcode::StoreFast => locals.get(arg).cloned(),
-        Opcode::LoadGlobal => {
+        Opcode::LoadFast | Opcode::LoadFastCheck | Opcode::StoreFast => locals.get(arg).cloned(),
+        Opcode::LoadGlobal | Opcode::LoadAttr => {
             global_name_index(arg as u32).and_then(|index| names.get(index).cloned())
         }
         Opcode::BinaryOp => Some(binary_op_name(arg as u32).to_string()),
@@ -806,14 +865,22 @@ impl Opcode {
         match self {
             Opcode::LoadConst => "LOAD_CONST",
             Opcode::LoadFast => "LOAD_FAST",
+            Opcode::LoadFastCheck => "LOAD_FAST_CHECK",
             Opcode::StoreFast => "STORE_FAST",
             Opcode::LoadGlobal => "LOAD_GLOBAL",
+            Opcode::LoadAttr => "LOAD_ATTR",
+            Opcode::BinarySubscr => "BINARY_SUBSCR",
+            Opcode::StoreSubscr => "STORE_SUBSCR",
+            Opcode::BinarySlice => "BINARY_SLICE",
+            Opcode::StoreSlice => "STORE_SLICE",
+            Opcode::BuildTuple => "BUILD_TUPLE",
             Opcode::BinaryOp => "BINARY_OP",
             Opcode::UnaryPositive => "UNARY_POSITIVE",
             Opcode::UnaryNegative => "UNARY_NEGATIVE",
             Opcode::UnaryNot => "UNARY_NOT",
             Opcode::CompareOp => "COMPARE_OP",
             Opcode::ReturnValue => "RETURN_VALUE",
+            Opcode::ReturnConst => "RETURN_CONST",
             Opcode::PopJumpIfFalse => "POP_JUMP_IF_FALSE",
             Opcode::PopJumpIfTrue => "POP_JUMP_IF_TRUE",
             Opcode::JumpForward => "JUMP_FORWARD",
@@ -839,6 +906,7 @@ impl Opcode {
         matches!(
             self,
             Opcode::ReturnValue
+                | Opcode::ReturnConst
                 | Opcode::PopJumpIfFalse
                 | Opcode::PopJumpIfTrue
                 | Opcode::JumpForward

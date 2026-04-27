@@ -4,14 +4,14 @@ use pyo3::types::PyDict;
 use crate::dispatcher::Dispatcher;
 use crate::errors::unsupported;
 use crate::frontend::validate_function;
-use crate::types::{parse_signature_value, ScalarType};
+use crate::types::{parse_signature_value, RumbaType};
 use crate::VERSION;
 
 #[pyclass]
 struct NjitDecorator {
     cache: bool,
     debug: bool,
-    signature: Option<Vec<ScalarType>>,
+    signature: Option<Vec<RumbaType>>,
 }
 
 #[pymethods]
@@ -70,7 +70,7 @@ fn version() -> &'static str {
 struct Options {
     cache: bool,
     debug: bool,
-    signature: Option<Vec<ScalarType>>,
+    signature: Option<Vec<RumbaType>>,
 }
 
 fn parse_options(options: Option<&Bound<'_, PyDict>>) -> PyResult<Options> {

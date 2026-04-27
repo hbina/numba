@@ -17,6 +17,11 @@ pub(crate) enum StmtNode {
         op: BinOp,
         value: ExprNode,
     },
+    StoreIndex {
+        target: ExprNode,
+        index: ExprNode,
+        value: ExprNode,
+    },
     If {
         test: ExprNode,
         body: Vec<StmtNode>,
@@ -37,6 +42,7 @@ impl StmtNode {
             Self::Return(_) => "Return",
             Self::Assign { .. } => "Assign",
             Self::AugAssign { .. } => "AugAssign",
+            Self::StoreIndex { .. } => "StoreIndex",
             Self::If { .. } => "If",
             Self::ForRange { .. } => "For",
         }
@@ -50,6 +56,11 @@ pub(crate) enum ExprNode {
     Call {
         function: Box<ParsedFunction>,
         args: Vec<ExprNode>,
+    },
+    Len(Box<ExprNode>),
+    Index {
+        target: Box<ExprNode>,
+        index: Box<ExprNode>,
     },
     BinOp {
         left: Box<ExprNode>,

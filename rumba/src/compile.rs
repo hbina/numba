@@ -12,14 +12,19 @@ use crate::cache::cache_key;
 use crate::codegen::c::Emitter;
 use crate::errors::{compilation, unsupported};
 use crate::frontend::ParsedInput;
-use crate::types::ScalarType;
+use crate::ir::StmtNode;
+use crate::types::RumbaType;
+use crate::typing::type_function;
 
 pub(crate) fn compile_parsed_function(
     parsed: ParsedInput,
-    signature: Vec<ScalarType>,
+    signature: Vec<RumbaType>,
 ) -> PyResult<CompiledArtifact> {
-    let mut emitter = Emitter::new(parsed.function, signature.clone())?;
-    let (source, return_type) = emitter.emit()?;
+    let requires_writable_arrays = has_store_index(&parsed.function.body);
+    let typed = type_function(parsed.function, signature.clone())?;
+    let return_type = typed.return_type;
+    let mut emitter = Emitter::new(typed);
+    let source = emitter.emit()?;
     let key = cache_key(&parsed.metadata, &signature, &source);
     let cache_dir = env::var("RUMBA_CACHE_DIR")
         .map(PathBuf::from)
@@ -71,10 +76,21 @@ pub(crate) fn compile_parsed_function(
         key,
         signature,
         return_type,
+        requires_writable_arrays,
         source,
+        cache_path: build_dir,
         library_path,
         compile_command: command,
         library: Arc::new(library),
+    })
+}
+
+fn has_store_index(body: &[StmtNode]) -> bool {
+    body.iter().any(|stmt| match stmt {
+        StmtNode::StoreIndex { .. } => true,
+        StmtNode::If { body, orelse, .. } => has_store_index(body) || has_store_index(orelse),
+        StmtNode::ForRange { body, .. } => has_store_index(body),
+        StmtNode::Return(_) | StmtNode::Assign { .. } | StmtNode::AugAssign { .. } => false,
     })
 }
 
