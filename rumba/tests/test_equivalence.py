@@ -2,6 +2,7 @@
 import math
 
 import numba
+import numpy as np
 import pytest
 import rumba
 
@@ -54,3 +55,13 @@ def test_weighted_sum():
         return a + b * c
 
     _check(weighted_sum, (3, 5, 7))
+
+
+def test_array_sum():
+    def array_sum(a):
+        total = 0
+        for i in range(len(a)):
+            total += a[i]
+        return total
+
+    _check(array_sum, (np.arange(8, dtype=np.int64),))

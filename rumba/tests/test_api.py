@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import rumba
@@ -71,6 +73,79 @@ def test_inspection_helpers():
     assert any(inst["opname"] == "RETURN_VALUE" for inst in bytecode)
     assert ast_summary["name"] == "add"
     assert ast_summary["body"] == ["Return"]
+
+
+def test_inspect_compile_command_requires_compilation():
+    @rumba.njit
+    def add(a, b):
+        return a + b
+
+    with pytest.raises(RumbaUnsupportedError, match="before compilation"):
+        add.inspect_compile_command()
+
+
+def test_inspect_compile_command_returns_single_compiled_artifact_command():
+    @rumba.njit
+    def add(a, b):
+        return a + b
+
+    assert add(1, 2) == 3
+    command = add.inspect_compile_command()
+    artifact = next(iter(add._compiled.values()))
+    assert isinstance(command, list)
+    assert command == artifact.compile_command
+    assert command[0]
+
+
+def test_inspect_compile_command_requires_signature_for_multiple_artifacts():
+    @rumba.njit
+    def add(a, b):
+        return a + b
+
+    assert add(1, 2) == 3
+    assert add(1.5, 2.5) == pytest.approx(4.0)
+    with pytest.raises(RumbaUnsupportedError, match="requires a signature"):
+        add.inspect_compile_command()
+
+    int_command = add.inspect_compile_command(("int64", "int64"))
+    assert int_command == list(add._compiled.values())[0].compile_command
+
+
+def test_inspect_cache_path_returns_build_directory():
+    @rumba.njit
+    def add(a, b):
+        return a + b
+
+    assert add(1, 2) == 3
+    cache_path = Path(add.inspect_cache_path())
+    artifact = next(iter(add._compiled.values()))
+    assert cache_path.is_dir()
+    assert str(cache_path) == artifact.cache_path
+    assert artifact.key in str(cache_path)
+
+
+def test_inspect_cache_path_requires_compiled_signature():
+    @rumba.njit
+    def add(a, b):
+        return a + b
+
+    assert add(1, 2) == 3
+    with pytest.raises(RumbaUnsupportedError, match="signature has not been compiled"):
+        add.inspect_cache_path(("float64", "float64"))
+
+
+def test_inspect_cache_path_requires_signature_for_multiple_artifacts():
+    @rumba.njit
+    def add(a, b):
+        return a + b
+
+    assert add(1, 2) == 3
+    assert add(1.5, 2.5) == pytest.approx(4.0)
+    with pytest.raises(RumbaUnsupportedError, match="requires a signature"):
+        add.inspect_cache_path()
+
+    float_path = add.inspect_cache_path(("float64", "float64"))
+    assert float_path == list(add._compiled.values())[1].cache_path
 
 
 def test_unsupported_list_argument_raises():

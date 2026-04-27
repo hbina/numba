@@ -79,6 +79,38 @@ def test_decode_global_function_calls():
     assert "rumba_helper_1" in c_source
 
 
+def test_promoted_float_return_survives_typing_pass():
+    @rumba.njit
+    def choose(a):
+        if a > 0:
+            return 1
+        return 2.5
+
+    assert choose(3.0) == pytest.approx(1.0)
+    assert choose(-1.0) == pytest.approx(2.5)
+
+
+def test_if_condition_must_be_bool():
+    @rumba.njit
+    def choose(a):
+        if a:
+            return 1
+        return 0
+
+    with pytest.raises(RumbaUnsupportedError, match="if condition must be boolean"):
+        choose(1)
+
+
+def test_use_before_assignment_still_raises():
+    @rumba.njit
+    def total(n):
+        acc += n
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="used before assignment"):
+        total(1)
+
+
 def test_source_unavailable_function_compiles_from_bytecode():
     namespace = {}
     exec(
@@ -97,7 +129,7 @@ def test_unsupported_list_indexing_raises_during_frontend_parsing():
     def first(x):
         return x[0]
 
-    with pytest.raises(RumbaUnsupportedError, match="unsupported bytecode opcode"):
+    with pytest.raises(RumbaUnsupportedError, match="indexing requires an array"):
         first(1)
 
 

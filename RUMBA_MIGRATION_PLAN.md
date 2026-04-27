@@ -120,16 +120,15 @@ an alias. The dispatcher class is a PyO3 `#[pyclass]`.
 
 ### Milestone 3: Rust-Owned Scalar Codegen Path
 
-Status: Implemented initial slice.
+Status: Implemented.
 
 Rust now owns scalar C source generation, cache key creation, generated-source
-writing, C compiler selection, C compiler invocation, and artifact metadata.
+writing, C compiler selection, C compiler invocation, artifact metadata, and a
+dedicated typing pass feeding C emission.
 
 Remaining work:
 
-- Split the current single Rust file into frontend, IR, typing, codegen,
-  runtime, dispatcher, and diagnostics modules.
-- Expose compiler command and cache path through inspection helpers.
+- Continue broadening typed IR diagnostics as the language surface grows.
 
 ### Milestone 4: Rust Bytecode Frontend
 
@@ -165,15 +164,15 @@ Required capabilities:
   flags. Partial.
 - Invoke compiled functions from Rust instead of Python `ctypes`. Implemented
   for homogeneous scalar signatures up to three arguments.
-- Preserve inspection helpers for bytecode, Rumba AST, typed AST, generated C,
-  compiler command, and cache path. Partial.
+- Preserve inspection helpers for bytecode, Rumba AST, generated C, compiler
+  command, and cache path. Implemented except typed AST.
 
 ### Milestone 6: Rust Type Inference And Diagnostics
 
-Status: Partial scalar support inside Rust C emitter.
+Status: Dedicated pass implemented for current scalar and 1D array slice.
 
-Promote the current ad hoc scalar typing into a dedicated Rust type inference
-pass over the Rumba AST.
+Current typing is handled by a dedicated Rust type inference pass over the Rumba
+AST before C emission.
 
 Required capabilities:
 
