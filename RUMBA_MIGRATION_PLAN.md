@@ -37,23 +37,27 @@ Python function object
   module named `rumba`.
 - Added Rust-owned `rumba.__version__`, `rumba.njit`, and `rumba.jit`.
 - Added a PyO3 dispatcher object with `.py_func`, `.signatures`, `_compiled`,
-  `.inspect_bytecode()`, `.inspect_rumba_ast()`, and `.inspect_c()`.
-- Added lazy compile-on-first-call for scalar signatures.
-- Moved scalar type handling, C emission, cache key creation, generated-source
-  writing, C compiler discovery, C compiler invocation, and shared-library
-  artifact metadata into Rust.
+  `.inspect_bytecode()`, `.inspect_rumba_ast()`, `.inspect_c()`,
+  `.inspect_compile_command()`, and `.inspect_cache_path()`.
+- Added lazy compile-on-first-call for observed signatures.
+- Added a Rust bytecode frontend for the currently supported Python 3.12
+  scalar and 1D array subset.
+- Added a dedicated Rust typing pass that feeds C emission.
+- Moved scalar and 1D array type handling, C emission, cache key creation,
+  generated-source writing, C compiler discovery, C compiler invocation, and
+  shared-library artifact metadata into Rust.
 - Moved decorator ergonomics, argument type discovery, exception types, compiled
   library loading, and native invocation into Rust.
 - Removed `rumba/python/rumba`; no Python files implement the package.
-- Removed the optional Python example script to keep the repository's Python
-  footprint limited to tests.
 - Added clear Rust-defined `RumbaUnsupportedError` and
   `RumbaCompilationError` exception types.
 
 The first implemented subset supports scalar `int64`, `float64`, and `bool`
 arguments, arithmetic, comparisons, simple `if` statements, `range` loops,
-local assignment, augmented assignment, and scalar returns. NumPy array lowering
-is intentionally not implemented yet.
+local assignment, augmented assignment, helper function calls, and scalar
+returns. It also supports initial 1D contiguous NumPy array handling for
+`int64` and `float64`, including `len(array)`, element load/store, dtype and
+layout validation, and scalar-returning kernels that mutate arrays in place.
 
 ## Non-Negotiable Direction
 
@@ -65,18 +69,20 @@ The following pieces are now Rust-owned in the initial slice:
 - Argument type discovery and signature construction.
 - Dispatcher object and specialization cache.
 - Public exception classes.
-- Scalar type inference and unsupported-operation diagnostics for the current
-  source/AST bridge.
-- ABI conversion and native invocation for the currently supported homogeneous
-  scalar signatures.
+- Bytecode decoding and Rumba AST construction for the currently supported
+  subset.
+- Dedicated type inference and unsupported-operation diagnostics for the
+  current scalar and 1D array subset.
+- ABI conversion and native invocation for the currently supported scalar and
+  1D array signatures.
 - Cache key generation and shared-library compilation.
 
 The following pieces still need deeper Rust implementations:
 
-- CPython bytecode reading from function code objects.
-- Rust-owned Rumba AST detached from Python `ast` objects.
-- Full typed AST and all inspection/debug representations.
-- ABI argument conversion, including scalar and NumPy array views.
+- Broader CPython bytecode coverage across supported Python versions.
+- Full typed AST inspection/debug representations.
+- Broader ABI argument conversion beyond the current scalar and 1D array view
+  subset.
 - Cache metadata serialization and invalidation.
 
 ## Public API
@@ -132,21 +138,24 @@ Remaining work:
 
 ### Milestone 4: Rust Bytecode Frontend
 
-Status: Not started.
+Status: Partial.
 
-Replace the current Python source/AST bridge with a Rust frontend that reads
-CPython code objects through PyO3 and decodes supported Python 3.10+ bytecode.
+The current implementation reads CPython code objects through PyO3 and decodes
+the Python 3.12 bytecode needed for the supported scalar and 1D array subset.
+It builds a Rust-owned Rumba AST for straight-line code, branches, simple
+`range` loops, `len`, scalar locals, helper calls, and array indexing.
 
 Required capabilities:
 
 - Decode instructions, offsets, constants, names, locals, freevars, and source
-  locations.
-- Build control-flow blocks and stack effects.
+  locations. Partial.
+- Build control-flow blocks and stack effects. Partial.
 - Reject closures, generators, exceptions, comprehensions, object operations,
-  and unsupported opcodes with structured diagnostics.
+  and unsupported opcodes with structured diagnostics. Partial.
 - Produce a Rust-owned Rumba AST for straight-line code, branches, simple
-  loops, `range`, `len`, scalar locals, and array indexing.
-- Keep bytecode frontend tests independent from Numba imports.
+  loops, `range`, `len`, scalar locals, and array indexing. Implemented for the
+  current subset.
+- Keep bytecode frontend tests independent from Numba imports. Implemented.
 
 ### Milestone 5: Rust Dispatcher And Runtime Invocation
 
@@ -157,13 +166,14 @@ Implement the dispatcher as a PyO3 class.
 Required capabilities:
 
 - Store the original Python function as `.py_func`. Implemented.
-- Discover argument types in Rust. Implemented for scalars.
+- Discover argument types in Rust. Implemented for scalars and 1D contiguous
+  `int64`/`float64` NumPy arrays.
 - Compile lazily on first call for an observed signature. Implemented.
 - Cache compiled artifacts by bytecode hash, constants, closure-free globals
   used, signature, Python version, Rumba version, target platform, and compiler
   flags. Partial.
 - Invoke compiled functions from Rust instead of Python `ctypes`. Implemented
-  for homogeneous scalar signatures up to three arguments.
+  for the current scalar and 1D array ABI combinations.
 - Preserve inspection helpers for bytecode, Rumba AST, generated C, compiler
   command, and cache path. Implemented except typed AST.
 
@@ -184,15 +194,24 @@ Required capabilities:
 
 ### Milestone 7: NumPy Array Interop In Rust
 
-Status: Not started.
+Status: Partial.
 
-Planned first array support:
+Initial array support is implemented for:
 
-- 1D contiguous `int64` and `float64` arrays.
+- 1D contiguous `int64` and `float64` arrays. Implemented.
 - Rust/PyO3 validation of dtype, dimensionality, contiguity, and mutability.
-- ABI representation containing data pointer, length, item size, and stride.
-- Lower array element load/store and `len(array)` to C.
-- Support scalar-returning kernels that mutate arrays in place.
+  Implemented.
+- ABI representation containing data pointer and length. Implemented.
+- Lower array element load/store and `len(array)` to C. Implemented.
+- Support scalar-returning kernels that mutate arrays in place. Implemented.
+
+Remaining work:
+
+- Carry item size and stride metadata if non-contiguous or strided views become
+  supported.
+- Broaden supported array ABI combinations deliberately.
+- Keep array-returning functions unsupported until ownership and lifetime rules
+  are designed.
 
 ### Milestone 8: Compatibility Growth
 
@@ -231,6 +250,7 @@ Python:
 - Lists, dicts, sets, tuples, exceptions, comprehensions, generators, closures,
   recursion, object mode, GPU, parallel mode, and general NumPy broadcasting.
 - Array-returning functions in the initial native path.
+- Bool arrays and non-contiguous NumPy arrays.
 - Windows native compilation until the shared-library and compiler-driver path
   is stable.
 
@@ -258,4 +278,5 @@ Python:
 | 2026-04-27 | Moved scalar C generation, cache key generation, generated source writing, compiler discovery, compiler invocation, and artifact metadata into Rust. |
 | 2026-04-27 | Updated project direction: Rumba is a Rust compiler/runtime with Python only as a thin package boundary and temporary glue. |
 | 2026-04-27 | Removed the Python package implementation and made `rumba` a top-level Rust/PyO3 extension module. |
-| 2026-04-27 | Removed the optional Python example script; remaining Python files are public API tests only. |
+| 2026-04-27 | Removed the Python package implementation files; Python remains limited to public API tests and optional examples. |
+| 2026-04-28 | Added dedicated Rust typing pass, compiler/cache inspection helpers, Python 3.12 bytecode frontend coverage for the current subset, and initial 1D NumPy array interop. |
