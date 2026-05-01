@@ -28,4 +28,4 @@ __pycache__/
 docs/source/developer/autogen*
 
 .codex
-AGENTS.md
+.claude
