@@ -165,3 +165,33 @@ def test_read_only_arrays_rejected_when_function_stores():
 
     with pytest.raises(RumbaUnsupportedError, match="read-only"):
         set_item(values)
+
+
+def test_inspect_typed_ast_records_array_len_index_and_store_types():
+    @rumba.njit
+    def set_from_end(a):
+        last = len(a) - 1
+        a[0] = a[last]
+        return a[0]
+
+    values = np.array([1.25, 2.5], dtype=np.float64)
+
+    assert set_from_end(values) == pytest.approx(2.5)
+    typed = set_from_end.inspect_typed_ast()
+    assign = typed["body"][0]
+    store = typed["body"][1]
+    ret = typed["body"][2]
+
+    assert typed["locals"]["last"] == "int64"
+    assert assign["target_type"] == "int64"
+    assert assign["value"]["left"]["kind"] == "Len"
+    assert assign["value"]["left"]["type"] == "int64"
+    assert assign["value"]["left"]["reason"] == "array_len"
+    assert store["kind"] == "StoreIndex"
+    assert store["element_type"] == "float64"
+    assert store["value_type"] == "float64"
+    assert store["value"]["kind"] == "Index"
+    assert store["value"]["type"] == "float64"
+    assert store["value"]["reason"] == "array_element"
+    assert ret["value"]["kind"] == "Index"
+    assert ret["value"]["type"] == "float64"

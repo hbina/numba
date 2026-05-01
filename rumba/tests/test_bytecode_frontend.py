@@ -3,6 +3,8 @@ import pytest
 import rumba
 from rumba import RumbaUnsupportedError
 
+_COMPARISON_OPERATORS = ("<", "<=", "==", "!=", ">", ">=")
+
 
 def _helper_add(a, b):
     return a + b
@@ -38,6 +40,31 @@ def test_decode_branch_to_rumba_if():
 
     summary = choose.inspect_rumba_ast()
     assert summary["body"][0] == "If"
+
+
+@pytest.mark.parametrize("op", _COMPARISON_OPERATORS)
+def test_decode_compare_op_argrepr(op):
+    namespace = {}
+    exec(f"def compare(a, b):\n    return a {op} b\n", namespace)
+    compare = rumba.njit(namespace["compare"])
+
+    bytecode = compare.inspect_bytecode()
+    comparisons = [inst for inst in bytecode if inst["opname"] == "COMPARE_OP"]
+
+    assert len(comparisons) == 1
+    assert comparisons[0]["argrepr"] == op
+
+
+def test_less_than_compare_op_does_not_decode_as_equals():
+    namespace = {}
+    exec("def compare(a, b):\n    return a < b\n", namespace)
+    compare = rumba.njit(namespace["compare"])
+
+    bytecode = compare.inspect_bytecode()
+    comparisons = [inst for inst in bytecode if inst["opname"] == "COMPARE_OP"]
+
+    assert comparisons[0]["argrepr"] == "<"
+    assert comparisons[0]["argrepr"] != "=="
 
 
 def test_decode_if_else_assignment_with_duplicated_tail_return():

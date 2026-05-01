@@ -5,6 +5,19 @@ import pytest
 import rumba
 from rumba import RumbaUnsupportedError
 
+_COMPARISON_OPERATORS = ("<", "<=", "==", "!=", ">", ">=")
+_SCALAR_PAIRS = (
+    (1, 2),
+    (1, 2.5),
+    (1, True),
+    (1.5, 2),
+    (1.5, 2.5),
+    (1.5, True),
+    (False, 1),
+    (False, 1.5),
+    (False, True),
+)
+
 
 def test_import_and_version():
     assert rumba.__version__
@@ -29,6 +42,48 @@ def test_njit_call_decorator_executes_float_branch():
 
     assert choose(1.5, 4.0) == pytest.approx(2.5)
     assert "if" in choose.inspect_c()
+
+
+@pytest.mark.parametrize("op", _COMPARISON_OPERATORS)
+@pytest.mark.parametrize(("left", "right"), _SCALAR_PAIRS)
+def test_scalar_comparisons_return_python_bool(op, left, right):
+    namespace = {}
+    exec(f"def compare(a, b):\n    return a {op} b\n", namespace)
+    compare = rumba.njit(namespace["compare"])
+
+    result = compare(left, right)
+
+    assert result == compare.py_func(left, right)
+    assert type(result) is bool
+
+
+@pytest.mark.parametrize("value", [1, 0.0, True])
+def test_unary_not_returns_python_bool_for_scalar_inputs(value):
+    @rumba.njit
+    def invert(a):
+        return not a
+
+    result = invert(value)
+
+    assert result == (not value)
+    assert type(result) is bool
+
+
+def test_debug_option_emits_compilation_and_runtime_details(capfd):
+    @rumba.njit(debug=True)
+    def add(a, b):
+        tmp = a + b
+        return tmp
+
+    assert add(1, 2) == 3
+
+    captured = capfd.readouterr()
+    assert "[rumba-debug] call: selected signature: [int64, int64]" in captured.err
+    assert "[rumba-debug] compile: typed function:" in captured.err
+    assert "locals:" in captured.err
+    assert "[rumba-debug] compile: generated C source follows" in captured.err
+    assert "[rumba-debug] runtime: ABI kinds: [I64, I64]" in captured.err
+    assert "[rumba-debug] dispatcher: artifact return type: int64" in captured.err
 
 
 def test_jit_alias():
@@ -146,6 +201,109 @@ def test_inspect_cache_path_requires_signature_for_multiple_artifacts():
 
     float_path = add.inspect_cache_path(("float64", "float64"))
     assert float_path == list(add._compiled.values())[1].cache_path
+
+
+def test_inspect_typed_ast_requires_compilation():
+    @rumba.njit
+    def add(a, b):
+        return a + b
+
+    with pytest.raises(RumbaUnsupportedError, match="before compilation"):
+        add.inspect_typed_ast()
+
+
+def test_inspect_typed_ast_returns_single_compiled_artifact():
+    @rumba.njit
+    def add(a, b):
+        tmp = a + b
+        return tmp
+
+    assert add(1, 2.5) == pytest.approx(3.5)
+    typed = add.inspect_typed_ast()
+
+    assert typed["name"] == "add"
+    assert typed["signature"] == ["int64", "float64"]
+    assert typed["return_type"] == "float64"
+    assert typed["args"] == [
+        {"name": "a", "type": "int64"},
+        {"name": "b", "type": "float64"},
+    ]
+    assert typed["locals"] == {"tmp": "float64"}
+    assign = typed["body"][0]
+    assert assign["kind"] == "Assign"
+    assert assign["target"] == "tmp"
+    assert assign["target_type"] == "float64"
+    assert assign["value"]["kind"] == "BinOp"
+    assert assign["value"]["type"] == "float64"
+    assert assign["value"]["reason"] == "promote_numeric"
+
+
+def test_inspect_typed_ast_requires_signature_for_multiple_artifacts():
+    @rumba.njit
+    def add(a, b):
+        return a + b
+
+    assert add(1, 2) == 3
+    assert add(1.5, 2.5) == pytest.approx(4.0)
+    with pytest.raises(RumbaUnsupportedError, match="requires a signature"):
+        add.inspect_typed_ast()
+
+    typed = add.inspect_typed_ast(("int64", "int64"))
+    assert typed["signature"] == ["int64", "int64"]
+    assert typed["return_type"] == "int64"
+
+
+def test_inspect_typed_ast_requires_compiled_signature():
+    @rumba.njit
+    def add(a, b):
+        return a + b
+
+    assert add(1, 2) == 3
+    with pytest.raises(RumbaUnsupportedError, match="signature has not been compiled"):
+        add.inspect_typed_ast(("float64", "float64"))
+
+
+def test_inspect_typed_ast_records_if_test_bool_and_loop_index():
+    @rumba.njit
+    def choose_total(n, flag):
+        acc = 0
+        for i in range(n):
+            acc += i
+        if flag:
+            return acc
+        return 0
+
+    assert choose_total(4, True) == 6
+    typed = choose_total.inspect_typed_ast()
+
+    assert typed["locals"]["i"] == "int64"
+    loop = typed["body"][1]
+    assert loop["kind"] == "ForRange"
+    assert loop["target"] == "i"
+    assert loop["target_type"] == "int64"
+    assert loop["reason"] == "range_index"
+    branch = typed["body"][2]
+    assert branch["kind"] == "If"
+    assert branch["test_type"] == "bool"
+    assert branch["test"]["reason"] == "environment"
+
+
+def test_inspect_typed_ast_exposes_helper_return_type():
+    def helper(a):
+        return a + 1.5
+
+    @rumba.njit
+    def use_helper(a):
+        return helper(a)
+
+    assert use_helper(2) == pytest.approx(3.5)
+    call = use_helper.inspect_typed_ast()["body"][0]["value"]
+
+    assert call["kind"] == "Call"
+    assert call["type"] == "float64"
+    assert call["reason"] == "helper_return"
+    assert call["helper"]["name"] == "helper"
+    assert call["helper"]["return_type"] == "float64"
 
 
 def test_unsupported_list_argument_raises():
