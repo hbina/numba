@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
 
+use crate::types::ScalarType;
 use crate::typing::{helper_key, TypedExpr, TypedExprKind, TypedFunction, TypedStmt};
 
 struct CExpr {
@@ -91,7 +92,9 @@ impl Emitter {
                 self.lines
                     .push(format!("{}{prefix}{name} = {};", indent(level), expr.code));
             }
-            TypedStmt::AugAssign { name, op, value } => {
+            TypedStmt::AugAssign {
+                name, op, value, ..
+            } => {
                 let expr = self.expr(value)?;
                 self.lines.push(format!(
                     "{}{name} {}= {};",
@@ -249,10 +252,13 @@ impl Emitter {
                 })
             }
             TypedExprKind::Compare { left, op, right } => {
+                let target_type = compare_operand_type(left, right);
                 let left = self.expr(left)?;
                 let right = self.expr(right)?;
+                let left = cast_compare_operand(&left.code, target_type);
+                let right = cast_compare_operand(&right.code, target_type);
                 Ok(CExpr {
-                    code: format!("({} {} {})", left.code, op.symbol(), right.code),
+                    code: format!("({left} {} {right})", op.symbol()),
                 })
             }
         }
@@ -261,6 +267,24 @@ impl Emitter {
 
 fn indent(level: usize) -> String {
     "    ".repeat(level)
+}
+
+fn compare_operand_type(left: &TypedExpr, right: &TypedExpr) -> ScalarType {
+    let left_type = left.typ.as_scalar().expect("typed scalar comparison");
+    let right_type = right.typ.as_scalar().expect("typed scalar comparison");
+    if left_type == ScalarType::Float64 || right_type == ScalarType::Float64 {
+        ScalarType::Float64
+    } else {
+        ScalarType::Int64
+    }
+}
+
+fn cast_compare_operand(code: &str, target_type: ScalarType) -> String {
+    match target_type {
+        ScalarType::Float64 => format!("(double)({code})"),
+        ScalarType::Int64 => format!("(int64_t)({code})"),
+        ScalarType::Bool => unreachable!("comparison operands are normalized to numeric types"),
+    }
 }
 
 trait UnarySymbol {

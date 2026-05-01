@@ -206,6 +206,14 @@ pub(crate) fn signature_tuple(py: Python<'_>, signature: &[RumbaType]) -> PyResu
     Ok(PyTuple::new_bound(py, items).into())
 }
 
+pub(crate) fn format_signature(signature: &[RumbaType]) -> String {
+    signature
+        .iter()
+        .map(|typ| typ.name())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub(crate) fn promote_numeric(
     left: ScalarType,
     right: ScalarType,

@@ -123,7 +123,14 @@ pub(crate) fn decode_function(func: &Bound<'_, PyAny>) -> PyResult<DecodedCodeOb
         .as_bytes()
         .to_vec();
     let line_starts = line_starts(&code)?;
-    let instructions = decode_instructions(&bytecode, &consts, &names, &varnames, &line_starts)?;
+    let instructions = decode_instructions(
+        &bytecode,
+        &consts,
+        &names,
+        &varnames,
+        &line_starts,
+        compare_op_uses_high_nibble(func.py())?,
+    )?;
 
     Ok(DecodedCodeObject {
         name,
@@ -612,6 +619,7 @@ fn decode_instructions(
     names: &[String],
     locals: &[String],
     line_starts: &[(usize, usize)],
+    compare_op_high_nibble: bool,
 ) -> PyResult<Vec<BytecodeInstruction>> {
     let mut out = Vec::new();
     let mut offset = 0;
@@ -637,7 +645,7 @@ fn decode_instructions(
                 offset,
                 opcode,
                 arg,
-                operand: operand_repr(opcode, arg, consts, names, locals),
+                operand: operand_repr(opcode, arg, consts, names, locals, compare_op_high_nibble),
                 starts_line: line_starts
                     .iter()
                     .find_map(|(line_offset, line)| (*line_offset == offset).then_some(*line)),
@@ -698,6 +706,7 @@ fn operand_repr(
     consts: &[Constant],
     names: &[String],
     locals: &[String],
+    compare_op_high_nibble: bool,
 ) -> Option<String> {
     let arg = arg? as usize;
     match opcode {
@@ -707,7 +716,7 @@ fn operand_repr(
             global_name_index(arg as u32).and_then(|index| names.get(index).cloned())
         }
         Opcode::BinaryOp => Some(binary_op_name(arg as u32).to_string()),
-        Opcode::CompareOp => Some(compare_op_name(arg as u32).to_string()),
+        Opcode::CompareOp => Some(compare_op_name(arg as u32, compare_op_high_nibble).to_string()),
         _ => Some(arg.to_string()),
     }
 }
@@ -735,13 +744,13 @@ fn binop(inst: &BytecodeInstruction) -> PyResult<(BinOp, bool)> {
 }
 
 fn cmpop(inst: &BytecodeInstruction) -> PyResult<CmpOp> {
-    match inst.arg.unwrap_or(0) & 0x0f {
-        0 => Ok(CmpOp::Lt),
-        1 => Ok(CmpOp::LtE),
-        2 => Ok(CmpOp::Eq),
-        3 => Ok(CmpOp::NotEq),
-        4 => Ok(CmpOp::Gt),
-        5 => Ok(CmpOp::GtE),
+    match inst.operand.as_deref() {
+        Some("<") => Ok(CmpOp::Lt),
+        Some("<=") => Ok(CmpOp::LtE),
+        Some("==") => Ok(CmpOp::Eq),
+        Some("!=") => Ok(CmpOp::NotEq),
+        Some(">") => Ok(CmpOp::Gt),
+        Some(">=") => Ok(CmpOp::GtE),
         _ => Err(unsupported("unsupported comparison operator")),
     }
 }
@@ -764,8 +773,8 @@ fn binary_op_name(arg: u32) -> &'static str {
     }
 }
 
-fn compare_op_name(arg: u32) -> &'static str {
-    match arg & 0x0f {
+fn compare_op_name(arg: u32, high_nibble: bool) -> &'static str {
+    match compare_op_index(arg, high_nibble) {
         0 => "<",
         1 => "<=",
         2 => "==",
@@ -774,6 +783,21 @@ fn compare_op_name(arg: u32) -> &'static str {
         5 => ">=",
         _ => "<unsupported>",
     }
+}
+
+fn compare_op_index(arg: u32, high_nibble: bool) -> u32 {
+    if high_nibble {
+        arg >> 4
+    } else {
+        arg
+    }
+}
+
+fn compare_op_uses_high_nibble(py: Python<'_>) -> PyResult<bool> {
+    let version_info = py.import_bound("sys")?.getattr("version_info")?;
+    let major: u8 = version_info.getattr("major")?.extract()?;
+    let minor: u8 = version_info.getattr("minor")?.extract()?;
+    Ok((major, minor) >= (3, 12))
 }
 
 fn pop_stack(stack: &mut Vec<StackValue>) -> PyResult<StackValue> {

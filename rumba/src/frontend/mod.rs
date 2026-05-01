@@ -5,11 +5,13 @@ use pyo3::types::PyBytes;
 
 use crate::ir::ParsedFunction;
 
+#[derive(Debug)]
 pub(crate) struct ParsedInput {
     pub(crate) function: ParsedFunction,
     pub(crate) metadata: CodeMetadata,
 }
 
+#[derive(Debug)]
 pub(crate) struct CodeMetadata {
     pub(crate) bytecode: Vec<u8>,
     pub(crate) consts: String,

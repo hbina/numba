@@ -6,16 +6,17 @@ use crate::errors::unsupported;
 use crate::ir::{BinOp, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp};
 use crate::types::{promote_numeric, RumbaType, ScalarType};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct TypedFunction {
     pub(crate) name: String,
     pub(crate) args: Vec<String>,
     pub(crate) signature: Vec<RumbaType>,
     pub(crate) body: Vec<TypedStmt>,
     pub(crate) return_type: ScalarType,
+    pub(crate) locals: HashMap<String, RumbaType>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum TypedStmt {
     Return(TypedExpr),
     Assign {
@@ -26,6 +27,7 @@ pub(crate) enum TypedStmt {
         name: String,
         op: BinOp,
         value: TypedExpr,
+        target_type: RumbaType,
     },
     StoreIndex {
         target: TypedExpr,
@@ -47,13 +49,13 @@ pub(crate) enum TypedStmt {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct TypedExpr {
     pub(crate) kind: TypedExprKind,
     pub(crate) typ: RumbaType,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum TypedExprKind {
     Constant(ConstantValue),
     Name(String),
@@ -113,11 +115,19 @@ pub(crate) fn type_function(
 
     Ok(TypedFunction {
         name,
+        locals: local_types(&args, &pass.env),
         args,
         signature,
         body: typed_body,
         return_type,
     })
+}
+
+fn local_types(args: &[String], env: &HashMap<String, RumbaType>) -> HashMap<String, RumbaType> {
+    env.iter()
+        .filter(|(name, _)| !args.contains(name))
+        .map(|(name, typ)| (name.clone(), *typ))
+        .collect()
 }
 
 struct TypePass {
@@ -165,6 +175,7 @@ impl TypePass {
                     name: name.clone(),
                     op: *op,
                     value: expr,
+                    target_type,
                 })
             }
             StmtNode::StoreIndex {

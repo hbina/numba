@@ -5,12 +5,14 @@ use libloading::Library;
 use pyo3::prelude::*;
 
 use crate::types::{RumbaType, ScalarType};
+use crate::typing::TypedFunction;
 
 #[derive(Clone)]
 pub(crate) struct CompiledArtifact {
     pub(crate) key: String,
     pub(crate) signature: Vec<RumbaType>,
     pub(crate) return_type: ScalarType,
+    pub(crate) typed_function: TypedFunction,
     pub(crate) requires_writable_arrays: bool,
     pub(crate) source: String,
     pub(crate) cache_path: PathBuf,

@@ -6,8 +6,9 @@ use crate::compile::compile_parsed_function;
 use crate::errors::unsupported;
 use crate::frontend::bytecode::{build_rumba_ast, inspect_bytecode};
 use crate::frontend::parse_function_input;
+use crate::inspect::typed_function_to_py;
 use crate::runtime::call_native;
-use crate::types::{parse_signature_tuple, signature_tuple, RumbaType};
+use crate::types::{format_signature, parse_signature_tuple, signature_tuple, RumbaType};
 
 #[pyclass]
 pub(crate) struct Dispatcher {
@@ -78,6 +79,18 @@ impl Dispatcher {
                 .map(|arg| RumbaType::from_arg(&arg))
                 .collect::<PyResult<Vec<_>>>()?,
         };
+        if self.debug {
+            eprintln!("[rumba-debug] call: function: {}", self.function_name(py));
+            eprintln!("[rumba-debug] call: positional argument count: {}", args.len());
+            eprintln!(
+                "[rumba-debug] call: selected signature: [{}]",
+                format_signature(&signature)
+            );
+            eprintln!(
+                "[rumba-debug] call: explicit signature: {}",
+                self.explicit_signature.is_some()
+            );
+        }
         if signature.len() != args.len() {
             return Err(unsupported(
                 "argument count does not match explicit signature",
@@ -85,7 +98,7 @@ impl Dispatcher {
         }
         let artifact_index = self.compile_if_needed(py, &signature)?;
         let artifact = &self.compiled[artifact_index];
-        call_native(py, artifact, args)
+        call_native(py, artifact, args, self.debug)
     }
 
     fn inspect_bytecode(&self, py: Python<'_>) -> PyResult<PyObject> {
@@ -125,6 +138,15 @@ impl Dispatcher {
             .cache_path
             .display()
             .to_string())
+    }
+
+    #[pyo3(signature = (signature=None))]
+    fn inspect_typed_ast(
+        &self,
+        py: Python<'_>,
+        signature: Option<&Bound<'_, PyTuple>>,
+    ) -> PyResult<PyObject> {
+        typed_function_to_py(py, &self.select_artifact(signature)?.typed_function)
     }
 }
 
@@ -175,13 +197,54 @@ impl Dispatcher {
             .iter()
             .position(|artifact| artifact.signature == signature)
         {
+            if self.debug {
+                eprintln!(
+                    "[rumba-debug] dispatcher: cache hit for signature [{}] at artifact index {index}",
+                    format_signature(signature)
+                );
+            }
             return Ok(index);
         }
 
+        if self.debug {
+            eprintln!(
+                "[rumba-debug] dispatcher: cache miss for signature [{}]; compiling",
+                format_signature(signature)
+            );
+        }
         let parsed = parse_function_input(py, self.py_func.bind(py))?;
-        let artifact = compile_parsed_function(parsed, signature.to_vec())?;
+        let artifact = compile_parsed_function(parsed, signature.to_vec(), self.debug)?;
+        if self.debug {
+            eprintln!(
+                "[rumba-debug] dispatcher: compiled artifact index {}",
+                self.compiled.len()
+            );
+            eprintln!("[rumba-debug] dispatcher: artifact key: {}", artifact.key);
+            eprintln!(
+                "[rumba-debug] dispatcher: artifact return type: {}",
+                artifact.return_type.name()
+            );
+            eprintln!(
+                "[rumba-debug] dispatcher: artifact library path: {}",
+                artifact.library_path.display()
+            );
+        }
         self.compiled.push(artifact);
         Ok(self.compiled.len() - 1)
+    }
+
+    fn function_name(&self, py: Python<'_>) -> String {
+        self.py_func
+            .bind(py)
+            .getattr("__qualname__")
+            .and_then(|name| name.extract())
+            .or_else(|_| {
+                self.py_func
+                    .bind(py)
+                    .getattr("__name__")
+                    .and_then(|name| name.extract())
+            })
+            .unwrap_or_else(|_| "<unknown>".to_string())
     }
 }
 

@@ -8,6 +8,7 @@ mod compile;
 mod dispatcher;
 mod errors;
 mod frontend;
+mod inspect;
 mod ir;
 mod runtime;
 mod types;
