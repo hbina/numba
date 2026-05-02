@@ -44,6 +44,15 @@ class CaseResult:
     detail: str
 
 
+FAILURE_STATUSES = frozenset(
+    {
+        "python_error",
+        "numba_mismatch",
+        "rumba_error",
+        "rumba_mismatch",
+    }
+)
+
 SCALAR_SPECS = (
     TypeSpec("int64", "scalar", lambda: 7),
     TypeSpec("float64", "scalar", lambda: 2.5),
@@ -289,7 +298,7 @@ def _short_error(exc: BaseException) -> str:
     return f"{exc.__class__.__name__}: {first_line}"
 
 
-def run_case(case: Case) -> CaseResult:
+def run_case(case: Case, *, debug: bool = True) -> CaseResult:
     try:
         py_value = case.py_func(*case.args_factory())
     except Exception as exc:  # noqa: BLE001 - this is a conformance report.
@@ -309,7 +318,7 @@ def run_case(case: Case) -> CaseResult:
         )
 
     try:
-        rumba_func = rumba.njit(debug=True)(case.py_func)
+        rumba_func = rumba.njit(debug=debug)(case.py_func)
         rumba_value = rumba_func(*case.args_factory())
     except Exception as exc:  # noqa: BLE001 - report all Rumba gaps.
         return CaseResult(case, "rumba_error", _short_error(exc))
@@ -337,12 +346,12 @@ def print_result(name, args, py_value, rumba_func):
     print(rumba_func.inspect_c())
 
 
-def run_nested_helper_case() -> CaseResult:
+def run_nested_helper_case(*, debug: bool = True, emit_details: bool = True) -> CaseResult:
     # This intentionally remains separate from the Numba-gated matrix.
     # Rumba supports plain module-level helper calls here; Numba does not.
     try:
         py_value = combined_functions(*NESTED_ARGS)
-        rumba_combined = rumba.njit(debug=True)(combined_functions)
+        rumba_combined = rumba.njit(debug=debug)(combined_functions)
         rumba_value = rumba_combined(*NESTED_ARGS)
     except Exception as exc:  # noqa: BLE001 - keep reporting style consistent.
         return CaseResult(
@@ -368,7 +377,8 @@ def run_nested_helper_case() -> CaseResult:
             f"Python={py_value!r}, Rumba={rumba_value!r}",
         )
 
-    print_result("combined_functions", NESTED_ARGS, py_value, rumba_combined)
+    if emit_details:
+        print_result("combined_functions", NESTED_ARGS, py_value, rumba_combined)
     return CaseResult(
         Case(
             "combined_functions",
@@ -379,6 +389,25 @@ def run_nested_helper_case() -> CaseResult:
         "passed",
         repr(py_value),
     )
+
+
+def run_conformance_matrix(
+    *, debug: bool = True, emit_details: bool = True
+) -> list[CaseResult]:
+    results = [run_case(case, debug=debug) for case in generate_cases()]
+    results.append(run_nested_helper_case(debug=debug, emit_details=emit_details))
+    return results
+
+
+def failure_results(results: list[CaseResult]) -> list[CaseResult]:
+    return [result for result in results if result.status in FAILURE_STATUSES]
+
+
+def format_failures(failures: list[CaseResult]) -> str:
+    lines = [f"{len(failures)} Numba-supported case(s) failed under Rumba:"]
+    for result in failures:
+        lines.append(f"  - {result.case.name}: {result.status}: {result.detail}")
+    return "\n".join(lines)
 
 
 def print_summary(results: list[CaseResult]) -> None:
@@ -404,19 +433,12 @@ def main() -> int:
     print(f"Numba version: {numba.__version__}")
     print(f"Rumba version: {rumba.__version__}")
 
-    results = [run_case(case) for case in generate_cases()]
-    results.append(run_nested_helper_case())
+    results = run_conformance_matrix()
     print_summary(results)
 
-    failure_statuses = {
-        "python_error",
-        "numba_mismatch",
-        "rumba_error",
-        "rumba_mismatch",
-    }
-    failures = [result for result in results if result.status in failure_statuses]
+    failures = failure_results(results)
     if failures:
-        print(f"\nFAILED: {len(failures)} Numba-supported case(s) failed under Rumba.")
+        print(f"\nFAILED: {format_failures(failures)}")
         return 1
 
     print("\nPython <=> Numba <=> Rumba comparisons passed.")
