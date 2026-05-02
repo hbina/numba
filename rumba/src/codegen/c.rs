@@ -116,6 +116,12 @@ impl Emitter {
                 self.lines
                     .push(format!("{}return {};", indent(level), expr.code));
             }
+            TypedStmt::Break => {
+                self.lines.push(format!("{}break;", indent(level)));
+            }
+            TypedStmt::Continue => {
+                self.lines.push(format!("{}continue;", indent(level)));
+            }
             TypedStmt::Assign { name, value } => {
                 let expr = self.expr(value)?;
                 let prefix = if self.declared.contains(name) {
@@ -504,6 +510,7 @@ fn collect_struct_dtypes_from_stmt(stmt: &TypedStmt, out: &mut Vec<StructDtype>)
         TypedStmt::Return(value) | TypedStmt::Assign { value, .. } => {
             collect_struct_dtypes_from_expr(value, out);
         }
+        TypedStmt::Break | TypedStmt::Continue => {}
         TypedStmt::AugAssign {
             value, target_type, ..
         } => {

@@ -331,19 +331,28 @@ def test_while_condition_must_be_bool():
         total(3)
 
 
-def test_break_inside_while_remains_unsupported():
+def test_break_inside_while_executes_and_inspects():
     @rumba.njit
     def total(n):
         acc = 0
         while n > 0:
-            break
+            if n == 2:
+                break
+            acc += n
+            n -= 1
+        acc += 10
         return acc
 
-    with pytest.raises(RumbaUnsupportedError, match="break is not supported"):
-        total(3)
+    assert total(5) == 22
+    summary = total.inspect_rumba_ast()
+    assert summary["body"] == ["Assign", "While", "AugAssign", "Return"]
+    loop = total.inspect_typed_ast()["body"][1]
+    assert loop["kind"] == "While"
+    assert loop["body"][0]["body"] == [{"kind": "Break"}]
+    assert "break;" in total.inspect_c()
 
 
-def test_continue_inside_while_remains_unsupported():
+def test_continue_inside_while_executes_and_inspects():
     @rumba.njit
     def total(n):
         acc = 0
@@ -354,11 +363,14 @@ def test_continue_inside_while_remains_unsupported():
             acc += n
         return acc
 
-    with pytest.raises(RumbaUnsupportedError, match="continue is not supported"):
-        total(4)
+    assert total(4) == 4
+    loop = total.inspect_typed_ast()["body"][1]
+    assert loop["kind"] == "While"
+    assert loop["body"][1]["body"] == [{"kind": "Continue"}]
+    assert "continue;" in total.inspect_c()
 
 
-def test_source_unavailable_continue_bytecode_shape_is_rejected():
+def test_source_unavailable_continue_bytecode_shape_executes():
     namespace = {}
     exec(
         "def generated(n):\n"
@@ -373,8 +385,93 @@ def test_source_unavailable_continue_bytecode_shape_is_rejected():
     )
     generated = rumba.njit(namespace["generated"])
 
-    with pytest.raises(RumbaUnsupportedError, match="unsupported .* control flow"):
-        generated(4)
+    assert generated(4) == 4
+
+
+def test_for_range_break_and_continue_execute():
+    @rumba.njit
+    def break_total(n):
+        acc = 0
+        for i in range(n):
+            if i == 3:
+                break
+            acc += i
+        acc += 10
+        return acc
+
+    @rumba.njit
+    def continue_total(n):
+        acc = 0
+        for i in range(n):
+            if i == 3:
+                continue
+            acc += i
+        return acc
+
+    assert break_total(6) == 13
+    assert continue_total(6) == 12
+    break_loop = break_total.inspect_typed_ast()["body"][1]
+    continue_loop = continue_total.inspect_typed_ast()["body"][1]
+    assert break_loop["kind"] == "ForRange"
+    assert break_loop["body"][0]["body"] == [{"kind": "Break"}]
+    assert continue_loop["kind"] == "ForRange"
+    assert continue_loop["body"][0]["body"] == [{"kind": "Continue"}]
+    assert "break;" in break_total.inspect_c()
+    assert "continue;" in continue_total.inspect_c()
+
+
+def test_nested_loop_control_applies_to_innermost_loop():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for i in range(n):
+            for j in range(n):
+                if j == 1:
+                    continue
+                if j == 3:
+                    break
+                acc += i + j
+        return acc
+
+    assert total(5) == 30
+
+
+def test_loop_control_with_arrays_and_struct_fields_executes():
+    @rumba.njit
+    def mutate(values, records, n):
+        acc = 0
+        for i in range(n):
+            if records[i]["a"] == 2:
+                continue
+            if i == 4:
+                break
+            values[i] = values[i] + records[i]["a"]
+            acc += values[i]
+        return acc
+
+    import numpy as np
+
+    values = np.arange(6, dtype=np.int64)
+    records = np.array(
+        [(0, 1.0), (1, 2.0), (2, 3.0), (3, 4.0), (4, 5.0), (5, 6.0)],
+        dtype=[("a", np.int64), ("b", np.float64)],
+    )
+    assert mutate(values, records, 6) == 8
+    assert values.tolist() == [0, 2, 2, 6, 4, 5]
+
+
+def test_while_else_remains_unsupported():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        while n > 0:
+            n -= 1
+        else:
+            acc = 1
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="while else is not supported"):
+        total(3)
 
 
 def test_range_rejects_float_stop():

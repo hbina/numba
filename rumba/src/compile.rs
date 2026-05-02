@@ -156,7 +156,11 @@ fn has_store_index(body: &[StmtNode]) -> bool {
         StmtNode::If { body, orelse, .. } => has_store_index(body) || has_store_index(orelse),
         StmtNode::While { body, .. } => has_store_index(body),
         StmtNode::ForRange { body, .. } => has_store_index(body),
-        StmtNode::Return(_) | StmtNode::Assign { .. } | StmtNode::AugAssign { .. } => false,
+        StmtNode::Return(_)
+        | StmtNode::Break
+        | StmtNode::Continue
+        | StmtNode::Assign { .. }
+        | StmtNode::AugAssign { .. } => false,
     })
 }
 

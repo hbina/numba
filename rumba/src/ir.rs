@@ -11,6 +11,8 @@ pub(crate) struct ParsedFunction {
 #[derive(Clone, Debug)]
 pub(crate) enum StmtNode {
     Return(ExprNode),
+    Break,
+    Continue,
     Assign {
         name: String,
         value: ExprNode,
@@ -53,6 +55,8 @@ impl StmtNode {
     pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::Return(_) => "Return",
+            Self::Break => "Break",
+            Self::Continue => "Continue",
             Self::Assign { .. } => "Assign",
             Self::AugAssign { .. } => "AugAssign",
             Self::StoreIndex { .. } => "StoreIndex",

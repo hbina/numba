@@ -94,6 +94,12 @@ enum StackValue {
     },
 }
 
+#[derive(Clone)]
+struct LoopContext {
+    break_targets: Vec<usize>,
+    continue_target: usize,
+}
+
 pub(crate) fn build_rumba_ast(
     _py: Python<'_>,
     func: &Bound<'_, PyAny>,
@@ -228,11 +234,16 @@ impl<'a> BytecodeParser<'a> {
         Ok(ParsedFunction {
             name: self.code.name.clone(),
             args: self.code.args.clone(),
-            body: self.parse_block(0, self.code.instructions.len())?.0,
+            body: self.parse_block(0, self.code.instructions.len(), None)?.0,
         })
     }
 
-    fn parse_block(&self, start: usize, end: usize) -> PyResult<(Vec<StmtNode>, usize)> {
+    fn parse_block(
+        &self,
+        start: usize,
+        end: usize,
+        loop_context: Option<&LoopContext>,
+    ) -> PyResult<(Vec<StmtNode>, usize)> {
         let mut statements = Vec::new();
         let mut stack = Vec::new();
         let mut index = start;
@@ -406,7 +417,13 @@ impl<'a> BytecodeParser<'a> {
                     }
                     let loop_var = self.local_name(&self.code.instructions[store_index])?;
                     let jump_index = self.find_loop_jump(store_index + 1, target)?;
-                    let (body, consumed) = self.parse_block(store_index + 1, jump_index)?;
+                    let break_targets = self.loop_break_targets(target)?;
+                    let loop_context = LoopContext {
+                        break_targets,
+                        continue_target: inst.offset,
+                    };
+                    let (body, consumed) =
+                        self.parse_block(store_index + 1, jump_index, Some(&loop_context))?;
                     if consumed != jump_index {
                         return Err(unsupported("unsupported control flow in range loop"));
                     }
@@ -432,7 +449,15 @@ impl<'a> BytecodeParser<'a> {
                     if let Some((body_end, jump_index)) =
                         self.trailing_while_jump(index, body_start, target_index)?
                     {
-                        let (body, consumed) = self.parse_block(body_start, body_end)?;
+                        let continue_target =
+                            self.initial_condition_start(index)?.unwrap_or(inst.offset);
+                        let loop_context = LoopContext {
+                            break_targets: self
+                                .loop_break_targets(self.code.instructions[target_index].offset)?,
+                            continue_target,
+                        };
+                        let (body, consumed) =
+                            self.parse_block(body_start, body_end, Some(&loop_context))?;
                         if consumed != body_end {
                             return Err(unsupported("unsupported while loop control flow"));
                         }
@@ -450,11 +475,27 @@ impl<'a> BytecodeParser<'a> {
                         if let Some(jump_index) =
                             self.trailing_forward_jump(body_start, target_index)?
                         {
+                            if self.is_loop_control_jump(jump_index, loop_context)? {
+                                let (body, body_end) =
+                                    self.parse_block(body_start, target_index, loop_context)?;
+                                if body_end != target_index {
+                                    return Err(unsupported("unsupported if control flow"));
+                                }
+                                statements.push(StmtNode::If {
+                                    test: maybe_invert_test(test, inst.opcode),
+                                    body,
+                                    orelse: Vec::new(),
+                                });
+                                index = target_index;
+                                continue;
+                            }
                             let after =
                                 self.jump_target(&self.code.instructions[jump_index], true)?;
                             let after_index = self.index_at(after)?;
-                            let (body, body_end) = self.parse_block(body_start, jump_index)?;
-                            let (orelse, else_end) = self.parse_block(target_index, after_index)?;
+                            let (body, body_end) =
+                                self.parse_block(body_start, jump_index, loop_context)?;
+                            let (orelse, else_end) =
+                                self.parse_block(target_index, after_index, loop_context)?;
                             if body_end != jump_index || else_end != after_index {
                                 return Err(unsupported("unsupported if/else control flow"));
                             }
@@ -469,6 +510,20 @@ impl<'a> BytecodeParser<'a> {
                         if let Some(jump_index) =
                             self.trailing_backward_jump(body_start, target_index)?
                         {
+                            if self.is_loop_control_jump(jump_index, loop_context)? {
+                                let (body, body_end) =
+                                    self.parse_block(body_start, target_index, loop_context)?;
+                                if body_end != target_index {
+                                    return Err(unsupported("unsupported if control flow"));
+                                }
+                                statements.push(StmtNode::If {
+                                    test: maybe_invert_test(test, inst.opcode),
+                                    body,
+                                    orelse: Vec::new(),
+                                });
+                                index = target_index;
+                                continue;
+                            }
                             let after =
                                 self.jump_target(&self.code.instructions[jump_index], false)?;
                             let Some(else_jump_index) = self.matching_backward_jump(
@@ -479,9 +534,10 @@ impl<'a> BytecodeParser<'a> {
                             else {
                                 return Err(unsupported("unsupported if/else loop control flow"));
                             };
-                            let (body, body_end) = self.parse_block(body_start, jump_index)?;
+                            let (body, body_end) =
+                                self.parse_block(body_start, jump_index, loop_context)?;
                             let (orelse, else_end) =
-                                self.parse_block(target_index, else_jump_index)?;
+                                self.parse_block(target_index, else_jump_index, loop_context)?;
                             if body_end != jump_index || else_end != else_jump_index {
                                 return Err(unsupported("unsupported if/else loop control flow"));
                             }
@@ -494,7 +550,8 @@ impl<'a> BytecodeParser<'a> {
                             continue;
                         }
                     }
-                    let (body, body_end) = self.parse_block(body_start, target_index)?;
+                    let (body, body_end) =
+                        self.parse_block(body_start, target_index, loop_context)?;
                     if body_end != target_index {
                         return Err(unsupported("unsupported if control flow"));
                     }
@@ -503,7 +560,8 @@ impl<'a> BytecodeParser<'a> {
                         .is_some_and(|stmt| matches!(stmt, StmtNode::Return(_)))
                         && target_index < end
                     {
-                        let (orelse, else_end) = self.parse_block(target_index, end)?;
+                        let (orelse, else_end) =
+                            self.parse_block(target_index, end, loop_context)?;
                         statements.push(StmtNode::If {
                             test: maybe_invert_test(test, inst.opcode),
                             body,
@@ -528,7 +586,33 @@ impl<'a> BytecodeParser<'a> {
                     statements.push(StmtNode::Return(self.const_expr(inst)?));
                     return Ok((statements, index + 1));
                 }
-                Opcode::JumpForward | Opcode::JumpBackward => return Ok((statements, index)),
+                Opcode::JumpForward => {
+                    if let Some(loop_context) = loop_context {
+                        let target = self.jump_target(inst, true)?;
+                        if loop_context.break_targets.contains(&target) {
+                            statements.push(StmtNode::Break);
+                            index += 1;
+                            continue;
+                        }
+                    }
+                    return Ok((statements, index));
+                }
+                Opcode::JumpBackward => {
+                    if let Some(loop_context) = loop_context {
+                        let target = self.jump_target(inst, false)?;
+                        if target == loop_context.continue_target {
+                            statements.push(StmtNode::Continue);
+                            index += 1;
+                            continue;
+                        }
+                        if loop_context.break_targets.contains(&target) {
+                            statements.push(StmtNode::Break);
+                            index += 1;
+                            continue;
+                        }
+                    }
+                    return Ok((statements, index));
+                }
                 Opcode::EndFor | Opcode::PopTop => {}
                 Opcode::Unsupported(opcode) => {
                     return Err(unsupported(format!("unsupported bytecode opcode {opcode}")));
@@ -591,6 +675,52 @@ impl<'a> BytecodeParser<'a> {
             .iter()
             .position(|inst| inst.offset >= offset)
             .ok_or_else(|| unsupported("jump target is outside decoded bytecode"))
+    }
+
+    fn loop_break_targets(&self, target: usize) -> PyResult<Vec<usize>> {
+        let mut targets = vec![target];
+        let index = self.index_at_or_after(target)?;
+        if self.code.instructions[index].opcode == Opcode::EndFor {
+            if let Some(after) = self.code.instructions.get(index + 1) {
+                targets.push(after.offset);
+                match after.opcode {
+                    Opcode::JumpForward => targets.push(self.jump_target(after, true)?),
+                    Opcode::JumpBackward => targets.push(self.jump_target(after, false)?),
+                    _ => {}
+                }
+            }
+        } else if matches!(
+            self.code.instructions[index].opcode,
+            Opcode::JumpForward | Opcode::JumpBackward
+        ) {
+            let inst = &self.code.instructions[index];
+            let target = if inst.opcode == Opcode::JumpForward {
+                self.jump_target(inst, true)?
+            } else {
+                self.jump_target(inst, false)?
+            };
+            targets.push(target);
+        }
+        targets.sort_unstable();
+        targets.dedup();
+        Ok(targets)
+    }
+
+    fn is_loop_control_jump(
+        &self,
+        jump_index: usize,
+        loop_context: Option<&LoopContext>,
+    ) -> PyResult<bool> {
+        let Some(loop_context) = loop_context else {
+            return Ok(false);
+        };
+        let inst = &self.code.instructions[jump_index];
+        let target = match inst.opcode {
+            Opcode::JumpForward => self.jump_target(inst, true)?,
+            Opcode::JumpBackward => self.jump_target(inst, false)?,
+            _ => return Ok(false),
+        };
+        Ok(target == loop_context.continue_target || loop_context.break_targets.contains(&target))
     }
 
     fn find_loop_jump(&self, start: usize, target: usize) -> PyResult<usize> {
@@ -692,6 +822,15 @@ impl<'a> BytecodeParser<'a> {
             .find_map(|inst| inst.starts_line)
     }
 
+    fn initial_condition_start(&self, jump_index: usize) -> PyResult<Option<usize>> {
+        let Some(line) = self.condition_line(jump_index) else {
+            return Ok(None);
+        };
+        Ok(self
+            .last_line_start(0, jump_index + 1, line)
+            .map(|index| self.code.instructions[index].offset))
+    }
+
     fn last_line_start(&self, start: usize, end: usize, line: usize) -> Option<usize> {
         (start..end)
             .rev()
@@ -791,8 +930,6 @@ fn reject_unsupported_source_control_flow(func: &Bound<'_, PyAny>) -> PyResult<(
         let node = node?;
         let class_name = node.get_type().name()?.to_string();
         match class_name.as_str() {
-            "Break" => return Err(unsupported("break is not supported")),
-            "Continue" => return Err(unsupported("continue is not supported")),
             "While" => {
                 if !node.getattr("orelse")?.is_empty()? {
                     return Err(unsupported("while else is not supported"));

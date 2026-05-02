@@ -53,6 +53,12 @@ fn stmt_to_py(py: Python<'_>, stmt: &TypedStmt) -> PyResult<PyObject> {
             out.set_item("value_type", value.typ.name())?;
             out.set_item("value", expr_to_py(py, value)?)?;
         }
+        TypedStmt::Break => {
+            out.set_item("kind", "Break")?;
+        }
+        TypedStmt::Continue => {
+            out.set_item("kind", "Continue")?;
+        }
         TypedStmt::Assign { name, value } => {
             out.set_item("kind", "Assign")?;
             out.set_item("target", name)?;

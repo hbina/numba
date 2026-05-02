@@ -23,6 +23,8 @@ pub(crate) struct TypedFunction {
 #[derive(Clone, Debug)]
 pub(crate) enum TypedStmt {
     Return(TypedExpr),
+    Break,
+    Continue,
     Assign {
         name: String,
         value: TypedExpr,
@@ -128,6 +130,7 @@ pub(crate) fn type_function(
         return_type: None,
         helper_cache: HashMap::new(),
         branch_only: HashSet::new(),
+        loop_depth: 0,
     };
 
     let typed_body = body
@@ -161,6 +164,7 @@ struct TypePass {
     return_type: Option<ScalarType>,
     helper_cache: HashMap<String, TypedFunction>,
     branch_only: HashSet<String>,
+    loop_depth: usize,
 }
 
 impl TypePass {
@@ -178,6 +182,18 @@ impl TypePass {
                     Some(current) => promote_numeric(current, expr_typ, "Add"),
                 });
                 Ok(TypedStmt::Return(expr))
+            }
+            StmtNode::Break => {
+                if self.loop_depth == 0 {
+                    return Err(unsupported("break is only supported inside loops"));
+                }
+                Ok(TypedStmt::Break)
+            }
+            StmtNode::Continue => {
+                if self.loop_depth == 0 {
+                    return Err(unsupported("continue is only supported inside loops"));
+                }
+                Ok(TypedStmt::Continue)
             }
             StmtNode::Assign { name, value } => {
                 let expr = self.expr(value)?;
@@ -341,10 +357,12 @@ impl TypePass {
                 if test.typ != RumbaType::Scalar(ScalarType::Bool) {
                     return Err(unsupported("while condition must be boolean"));
                 }
+                self.loop_depth += 1;
                 let body = body
                     .iter()
                     .map(|stmt| self.stmt(stmt))
                     .collect::<PyResult<Vec<_>>>()?;
+                self.loop_depth -= 1;
                 Ok(TypedStmt::While { test, body })
             }
             StmtNode::ForRange {
@@ -365,10 +383,12 @@ impl TypePass {
                 }
                 self.env
                     .insert(target.to_string(), RumbaType::Scalar(ScalarType::Int64));
+                self.loop_depth += 1;
                 let body = body
                     .iter()
                     .map(|stmt| self.stmt(stmt))
                     .collect::<PyResult<Vec<_>>>()?;
+                self.loop_depth -= 1;
                 Ok(TypedStmt::ForRange {
                     target: target.clone(),
                     start,
@@ -709,7 +729,7 @@ fn stmts_may_continue(stmts: &[StmtNode]) -> bool {
 
 fn stmt_may_continue(stmt: &StmtNode) -> bool {
     match stmt {
-        StmtNode::Return(_) => false,
+        StmtNode::Return(_) | StmtNode::Break | StmtNode::Continue => false,
         StmtNode::If { body, orelse, .. } => {
             orelse.is_empty() || stmts_may_continue(body) || stmts_may_continue(orelse)
         }

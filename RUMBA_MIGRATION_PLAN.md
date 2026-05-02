@@ -141,8 +141,8 @@ explicitly added to this table.
 | `elif` | Supported | Implemented for current slice | Normalized as nested `else: if ...` in the AST/control-flow frontend. |
 | `for` loops | Supported for `range(...)` only | Partial | Keep support focused on `for i in range(...)`; iteration over lists, tuples, arrays, generators, and arbitrary objects remains unsupported. |
 | `range(start/stop/step)` | Supported | Implemented for current slice | Supports one-, two-, and three-argument integer ranges, including dynamic positive and negative steps. Reject non-integer range bounds and constant zero step. |
-| `while` loops | Supported | Not started | Add bytecode control-flow recognition, AST node, type checking for boolean conditions, C lowering, and tests. |
-| `break` / `continue` | Supported inside supported loops | Not started | Add structured loop exits in the AST/lowering. Reject use outside loops and unsupported nested-control-flow cases clearly. |
+| `while` loops | Supported | Implemented for current slice | Bytecode control-flow recognition, AST node, boolean typed conditions, C lowering, and tests are in place for supported while-loop shapes. |
+| `break` / `continue` | Supported inside supported loops | Active | Add structured loop exits in the AST/lowering. Reject use outside loops and unsupported nested-control-flow cases clearly. |
 | Local assignment | Supported | Implemented | Continue to require statically typed local variables in the Rust typing pass. |
 | Augmented assignment | Supported | Implemented | Current support is scalar-focused; array element augmented assignment should remain explicit future work. |
 | Arithmetic operators | Supported for scalar numeric values | Partial | Maintain support for the scalar numeric subset first: `+`, `-`, `*`, `/`, `//`, `%`, unary `+`, unary `-`. Broader operators are not implied. |
