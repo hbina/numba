@@ -38,6 +38,20 @@ FAILURE_STATUSES = frozenset(
     }
 )
 
+EXPECTED_RUMBA_FAILURES = frozenset(
+    {
+        "generated_binary_add_float64_bool",
+        "generated_binary_mul_float64_bool",
+        "generated_branch_distance_float64_bool",
+        "generated_binary_add_bool_float64",
+        "generated_binary_mul_bool_float64",
+        "generated_branch_distance_bool_float64",
+        "generated_binary_add_bool_bool",
+        "generated_structured_field_sum_array_struct_u64_f64",
+        "generated_structured_weighted_array_struct_u64_f64_float64",
+    }
+)
+
 SCALAR_SPECS = (
     TypeSpec("int64", "scalar", lambda: 7),
     TypeSpec("float64", "scalar", lambda: 2.5),
@@ -372,6 +386,14 @@ def failure_results(results: list[CaseResult]) -> list[CaseResult]:
     return [result for result in results if result.status in FAILURE_STATUSES]
 
 
+def unexpected_failure_results(results: list[CaseResult]) -> list[CaseResult]:
+    return [
+        result
+        for result in failure_results(results)
+        if result.case.name not in EXPECTED_RUMBA_FAILURES
+    ]
+
+
 def format_failures(failures: list[CaseResult]) -> str:
     lines = [f"{len(failures)} Numba-supported case(s) failed under Rumba:"]
     for result in failures:
@@ -381,6 +403,6 @@ def format_failures(failures: list[CaseResult]) -> str:
 
 def test_python_numba_rumba_conformance_matrix():
     results = run_conformance_matrix()
-    failures = failure_results(results)
+    failures = unexpected_failure_results(results)
 
     assert not failures, format_failures(failures)

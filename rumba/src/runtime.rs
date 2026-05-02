@@ -138,10 +138,40 @@ unsafe fn call_i64(
                 artifact.library.get(b"rumba_entry").map_err(load_error)?;
             Ok(f(arg_array_i64(args, 0), arg_i64(args, 1)))
         }
+        [AbiKind::ArrayI64, AbiKind::F64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, f64) -> i64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_i64(args, 0), arg_f64(args, 1)))
+        }
         [AbiKind::I64, AbiKind::ArrayI64] => {
             let f: libloading::Symbol<unsafe extern "C" fn(i64, ArrayI64View) -> i64> =
                 artifact.library.get(b"rumba_entry").map_err(load_error)?;
             Ok(f(arg_i64(args, 0), arg_array_i64(args, 1)))
+        }
+        [AbiKind::F64, AbiKind::ArrayI64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(f64, ArrayI64View) -> i64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_f64(args, 0), arg_array_i64(args, 1)))
+        }
+        [AbiKind::ArrayI64, AbiKind::ArrayI64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, ArrayI64View) -> i64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_i64(args, 0), arg_array_i64(args, 1)))
+        }
+        [AbiKind::ArrayI64, AbiKind::ArrayF64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, ArrayF64View) -> i64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_i64(args, 0), arg_array_f64(args, 1)))
+        }
+        [AbiKind::ArrayF64, AbiKind::ArrayI64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, ArrayI64View) -> i64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_f64(args, 0), arg_array_i64(args, 1)))
+        }
+        [AbiKind::ArrayF64, AbiKind::ArrayF64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, ArrayF64View) -> i64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_f64(args, 0), arg_array_f64(args, 1)))
         }
         [AbiKind::I64, AbiKind::I64, AbiKind::I64] => {
             let f: libloading::Symbol<unsafe extern "C" fn(i64, i64, i64) -> i64> =
@@ -203,6 +233,51 @@ unsafe fn call_f64(
             let f: libloading::Symbol<unsafe extern "C" fn(f64, ArrayF64View) -> f64> =
                 artifact.library.get(b"rumba_entry").map_err(load_error)?;
             Ok(f(arg_f64(args, 0), arg_array_f64(args, 1)))
+        }
+        [AbiKind::ArrayI64, AbiKind::I64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, i64) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_i64(args, 0), arg_i64(args, 1)))
+        }
+        [AbiKind::ArrayI64, AbiKind::F64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, f64) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_i64(args, 0), arg_f64(args, 1)))
+        }
+        [AbiKind::I64, AbiKind::ArrayI64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(i64, ArrayI64View) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_i64(args, 0), arg_array_i64(args, 1)))
+        }
+        [AbiKind::I64, AbiKind::ArrayF64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(i64, ArrayF64View) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_i64(args, 0), arg_array_f64(args, 1)))
+        }
+        [AbiKind::F64, AbiKind::ArrayI64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(f64, ArrayI64View) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_f64(args, 0), arg_array_i64(args, 1)))
+        }
+        [AbiKind::ArrayI64, AbiKind::ArrayI64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, ArrayI64View) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_i64(args, 0), arg_array_i64(args, 1)))
+        }
+        [AbiKind::ArrayI64, AbiKind::ArrayF64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, ArrayF64View) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_i64(args, 0), arg_array_f64(args, 1)))
+        }
+        [AbiKind::ArrayF64, AbiKind::ArrayI64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, ArrayI64View) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_f64(args, 0), arg_array_i64(args, 1)))
+        }
+        [AbiKind::ArrayF64, AbiKind::ArrayF64] => {
+            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, ArrayF64View) -> f64> =
+                artifact.library.get(b"rumba_entry").map_err(load_error)?;
+            Ok(f(arg_array_f64(args, 0), arg_array_f64(args, 1)))
         }
         [AbiKind::F64, AbiKind::F64, AbiKind::F64] => {
             let f: libloading::Symbol<unsafe extern "C" fn(f64, f64, f64) -> f64> =

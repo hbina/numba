@@ -61,14 +61,115 @@ def test_mutate_float64_array_in_place():
     assert values.tolist() == [1.0, 2.0, 9.5]
 
 
-def test_mix_scalar_and_array_arguments():
+@pytest.mark.parametrize(
+    ("values", "offset", "expected"),
+    [
+        (np.array([10, 20], dtype=np.int64), 7, 17),
+        (np.array([10, 20], dtype=np.int64), 2.5, 12.5),
+        (np.array([1.25, 2.5], dtype=np.float64), 7, 8.25),
+        (np.array([1.25, 2.5], dtype=np.float64), 2.5, 3.75),
+    ],
+)
+def test_array_plus_scalar_arguments(values, offset, expected):
     @rumba.njit
     def add_offset(a, offset):
         return a[0] + offset
 
-    values = np.array([10, 20], dtype=np.int64)
+    assert add_offset(values, offset) == pytest.approx(expected)
 
-    assert add_offset(values, 7) == 17
+
+@pytest.mark.parametrize(
+    ("offset", "values", "expected"),
+    [
+        (7, np.array([10, 20], dtype=np.int64), 17),
+        (2.5, np.array([10, 20], dtype=np.int64), 12.5),
+        (7, np.array([1.25, 2.5], dtype=np.float64), 8.25),
+        (2.5, np.array([1.25, 2.5], dtype=np.float64), 3.75),
+    ],
+)
+def test_scalar_plus_array_arguments(offset, values, expected):
+    @rumba.njit
+    def add_offset(offset, a):
+        return offset + a[0]
+
+    assert add_offset(offset, values) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("values", "replacement", "expected", "mutated"),
+    [
+        (np.array([1, 2, 3], dtype=np.int64), 99, 99, [1, 99, 3]),
+        (np.array([1, 2, 3], dtype=np.int64), 9.5, 9, [1, 9, 3]),
+        (np.array([1.0, 2.0, 3.0], dtype=np.float64), 99, 99.0, [1.0, 99.0, 3.0]),
+        (np.array([1.0, 2.0, 3.0], dtype=np.float64), 9.5, 9.5, [1.0, 9.5, 3.0]),
+    ],
+)
+def test_array_mutation_with_scalar_arguments(values, replacement, expected, mutated):
+    @rumba.njit
+    def set_item(a, value):
+        a[1] = value
+        return a[1]
+
+    assert set_item(values, replacement) == pytest.approx(expected)
+    assert values.tolist() == pytest.approx(mutated)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        (
+            np.array([10, 20], dtype=np.int64),
+            np.array([7, 8], dtype=np.int64),
+            17,
+        ),
+        (
+            np.array([10, 20], dtype=np.int64),
+            np.array([1.25, 2.5], dtype=np.float64),
+            11.25,
+        ),
+        (
+            np.array([1.25, 2.5], dtype=np.float64),
+            np.array([7, 8], dtype=np.int64),
+            8.25,
+        ),
+        (
+            np.array([1.25, 2.5], dtype=np.float64),
+            np.array([2.5, 5.0], dtype=np.float64),
+            3.75,
+        ),
+    ],
+)
+def test_array_plus_array_arguments(left, right, expected):
+    @rumba.njit
+    def add_first(a, b):
+        return a[0] + b[0]
+
+    assert add_first(left, right) == pytest.approx(expected)
+
+
+def test_mixed_array_scalar_inspect_c_signatures():
+    @rumba.njit
+    def array_then_scalar(a, x):
+        return a[0] + x
+
+    @rumba.njit
+    def scalar_then_array(x, a):
+        return x + a[0]
+
+    @rumba.njit
+    def arrays(a, b):
+        return a[0] + b[0]
+
+    ints = np.array([10, 20], dtype=np.int64)
+    floats = np.array([1.25, 2.5], dtype=np.float64)
+
+    assert array_then_scalar(ints, 2.5) == pytest.approx(12.5)
+    assert scalar_then_array(2.5, floats) == pytest.approx(3.75)
+    assert arrays(floats, ints) == pytest.approx(11.25)
+
+    assert "double rumba_entry(rumba_array_i64 a, double x)" in array_then_scalar.inspect_c()
+    assert "double rumba_entry(double x, rumba_array_f64 a)" in scalar_then_array.inspect_c()
+    assert "double rumba_entry(rumba_array_f64 a, rumba_array_i64 b)" in arrays.inspect_c()
 
 
 def test_helper_function_reads_array():
@@ -208,15 +309,15 @@ def test_tuple_indexing_is_unsupported():
 
 def test_read_only_arrays_rejected_when_function_stores():
     @rumba.njit
-    def set_item(a):
-        a[0] = 10
+    def set_item(a, value):
+        a[0] = value
         return a[0]
 
     values = np.array([1, 2], dtype=np.int64)
     values.flags.writeable = False
 
     with pytest.raises(RumbaUnsupportedError, match="read-only"):
-        set_item(values)
+        set_item(values, 10)
 
 
 def test_inspect_typed_ast_records_array_len_index_and_store_types():
