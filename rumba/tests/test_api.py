@@ -38,6 +38,28 @@ def _plain_python_helper(a):
     return a + 1
 
 
+@rumba.njit
+def _recursive_helper(a):
+    if a == 0:
+        return 0
+    return _recursive_helper(a - 1)
+
+
+@rumba.njit
+def _helper_with_default(a=1):
+    return a
+
+
+@rumba.njit
+def _helper_with_varargs(*args):
+    return 1
+
+
+@rumba.njit
+def _helper_with_keyword_only(*, a):
+    return a
+
+
 def test_import_and_version():
     assert rumba.__version__
 
@@ -329,7 +351,7 @@ def test_undecorated_module_level_helper_call_raises():
 
     with pytest.raises(
         RumbaUnsupportedError,
-        match="calls to undecorated Python helper functions are not supported",
+        match="helper calls require @rumba.njit-decorated functions",
     ):
         use_helper(1)
 
@@ -343,6 +365,18 @@ def test_decorated_helper_works_before_direct_compilation():
 
     assert use_helper(3) == 6
     assert _uncalled_decorated_helper.signatures == []
+
+
+def test_debug_output_includes_generated_helper_c(capfd):
+    @rumba.njit(debug=True)
+    def use_helper(a):
+        return _uncalled_decorated_helper(a)
+
+    assert use_helper(3) == 6
+
+    captured = capfd.readouterr()
+    assert "[rumba-debug] compile: typed function:" in captured.err
+    assert "static int64_t rumba_helper_0" in captured.err
 
 
 def test_explicit_helper_signature_match_works():
@@ -360,6 +394,42 @@ def test_explicit_helper_signature_mismatch_raises():
 
     with pytest.raises(RumbaUnsupportedError, match="does not match explicit helper signature"):
         use_helper(1.5)
+
+
+def test_recursive_jitted_helper_call_remains_unsupported():
+    @rumba.njit
+    def use_helper(a):
+        return _recursive_helper(a)
+
+    with pytest.raises(RumbaUnsupportedError, match="recursive function calls are not supported"):
+        use_helper(3)
+
+
+def test_helper_with_default_args_remains_unsupported():
+    @rumba.njit
+    def use_helper(a):
+        return _helper_with_default(a)
+
+    with pytest.raises(RumbaUnsupportedError, match="default arguments are not supported"):
+        use_helper(1)
+
+
+def test_helper_with_varargs_remains_unsupported():
+    @rumba.njit
+    def use_helper(a):
+        return _helper_with_varargs(a)
+
+    with pytest.raises(RumbaUnsupportedError, match="varargs and kwargs are not supported"):
+        use_helper(1)
+
+
+def test_helper_with_keyword_only_args_remains_unsupported():
+    @rumba.njit
+    def use_helper(a):
+        return _helper_with_keyword_only(a)
+
+    with pytest.raises(RumbaUnsupportedError, match="keyword-only arguments are not supported"):
+        use_helper(1)
 
 
 def test_unsupported_list_argument_raises():

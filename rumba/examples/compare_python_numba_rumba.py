@@ -35,12 +35,18 @@ def weighted_sum_i64(a, b, c):
     return a + b * c
 
 
+rumba_add_i64 = rumba.njit(add_i64)
+rumba_distance_f64 = rumba.njit(distance_f64)
+rumba_triangular_i64 = rumba.njit(triangular_i64)
+rumba_weighted_sum_i64 = rumba.njit(weighted_sum_i64)
+
+
 def combined_functions(a, b, c):
     return (
-        add_i64(a, b)
-        + distance_f64(a, b)
-        + triangular_i64(c)
-        + weighted_sum_i64(a, b, c)
+        rumba_add_i64(a, b)
+        + rumba_distance_f64(a, b)
+        + rumba_triangular_i64(c)
+        + rumba_weighted_sum_i64(a, b, c)
     )
 
 
@@ -82,9 +88,9 @@ def main():
         rumba_value = rumba_func(*args)
 
         assert_same(name, py_value, numba_value, rumba_value)
-        signature = ", ".join(typ.name for typ in rumba_func.signatures[0])
+        signature = ", ".join(str(typ) for typ in rumba_func.signatures[0])
 
-        numba_note = "" if compare_numba else "; Numba skipped for plain helper calls"
+        numba_note = "" if compare_numba else "; Numba skipped for Rumba jitted helper calls"
         print(
             f"{name}({', '.join(map(repr, args))}) -> {py_value!r} "
             f"[Rumba signature: ({signature}){numba_note}]"

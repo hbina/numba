@@ -544,7 +544,7 @@ impl<'a> BytecodeParser<'a> {
         };
         let Ok(dispatcher) = value.extract::<PyRef<'_, Dispatcher>>() else {
             return Err(unsupported(
-                "calls to undecorated Python helper functions are not supported; decorate helper with @rumba.njit",
+                "helper calls require @rumba.njit-decorated functions",
             ));
         };
         let explicit_signature = dispatcher.explicit_signature();

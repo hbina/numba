@@ -64,8 +64,10 @@ layout validation, and scalar-returning kernels that mutate arrays in place.
 
 Current known gap in the chosen Python syntax subset:
 
-- Helper function calls are represented in the IR and typing path, but local
-  nested helper functions still fail because closures are rejected.
+- Helper function calls are supported only for top-level helpers already
+  decorated with `@rumba.njit`. Plain Python helpers, local nested helpers,
+  closures, recursive helpers, and runtime dispatcher calls from generated C
+  remain unsupported.
 
 ## Non-Negotiable Direction
 
@@ -130,7 +132,7 @@ explicitly added to this table.
 | Comparisons | Supported for scalar values | Partial | Support equality and ordering comparisons for scalar numeric/bool combinations where typing and C lowering are defined. |
 | Boolean conditions | Supported | Partial | Conditions must type as `bool`. Truthiness for arrays, objects, lists, tuples, and arbitrary values remains unsupported. |
 | Unary operators | Supported for scalar values | Partial | Support unary numeric signs and boolean `not` for typed scalar expressions. |
-| Function calls | Supported for selected helper calls | Failing/partial | Support direct calls to analyzable helper functions without Python fallback. Local nested helpers/closures are currently rejected and need a deliberate design. |
+| Function calls | Supported for selected helper calls | Partial | Support direct calls to top-level `@rumba.njit` helper functions without Python fallback. Plain Python helpers, local nested helpers/closures, and recursive helpers are rejected. |
 
 Everything outside this table should be treated as unsupported by default. New
 syntax must be added deliberately with frontend tests, typing tests, C codegen
@@ -266,8 +268,10 @@ Required capabilities:
   surface grows.
 - Broaden scalar arithmetic, comparison, boolean, and unary operator tests
   within the supported scalar type set.
-- Make helper function calls reliable for supported non-closure helper
-  functions, or explicitly document and test the exact helper-call restrictions.
+- Keep helper function calls reliable for supported top-level `@rumba.njit`
+  helper functions, and preserve explicit tests for unsupported plain Python
+  helpers, local nested helpers/closures, recursive helpers, default args,
+  kwargs, varargs, and keyword-only args.
 
 Out of scope for this milestone:
 
@@ -316,7 +320,7 @@ Python:
 - Focused Python syntax tests for nested `if` / `else`, `elif`, one-, two-, and
   three-argument `range`, `while`, `break`, `continue`, scalar arithmetic,
   comparisons, boolean conditions, unary operators, local assignment, augmented
-  assignment, and supported helper calls.
+  assignment, and supported jitted-only helper calls.
 - Execution tests for scalar arithmetic, branches, loops, cache reuse, and
   distinct signatures.
 - NumPy tests for 1D array reads/writes, dtype mismatch, non-contiguous arrays,
