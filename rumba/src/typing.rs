@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::errors::unsupported;
 use crate::ir::{BinOp, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp};
-use crate::types::{promote_numeric, RumbaType, ScalarType};
+use crate::types::{format_signature, promote_numeric, RumbaType, ScalarType};
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypedFunction {
@@ -284,12 +284,25 @@ impl TypePass {
                     typ,
                 })
             }
-            ExprNode::Call { function, args } => {
+            ExprNode::Call {
+                function,
+                explicit_signature,
+                args,
+            } => {
                 let args = args
                     .iter()
                     .map(|arg| self.expr(arg))
                     .collect::<PyResult<Vec<_>>>()?;
                 let signature = args.iter().map(|arg| arg.typ).collect::<Vec<_>>();
+                if let Some(explicit_signature) = explicit_signature {
+                    if explicit_signature != &signature {
+                        return Err(unsupported(format!(
+                            "helper call signature [{}] does not match explicit helper signature [{}]",
+                            format_signature(&signature),
+                            format_signature(explicit_signature)
+                        )));
+                    }
+                }
                 let key = parsed_helper_key(function, &signature);
                 let function = if let Some(function) = self.helper_cache.get(&key) {
                     function.clone()

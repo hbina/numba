@@ -1,8 +1,10 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
+use crate::dispatcher::Dispatcher;
 use crate::errors::unsupported;
 use crate::ir::{BinOp, CmpOp, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp};
+use crate::types::RumbaType;
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -335,9 +337,11 @@ impl<'a> BytecodeParser<'a> {
                             ))));
                         }
                         StackValue::Name(name) => {
-                            let function = self.resolve_global_function(&name)?;
+                            let (function, explicit_signature) =
+                                self.resolve_global_function(&name)?;
                             stack.push(StackValue::Expr(ExprNode::Call {
                                 function: Box::new(function),
+                                explicit_signature,
                                 args,
                             }));
                         }
@@ -531,14 +535,25 @@ impl<'a> BytecodeParser<'a> {
         }
     }
 
-    fn resolve_global_function(&self, name: &str) -> PyResult<ParsedFunction> {
+    fn resolve_global_function(
+        &self,
+        name: &str,
+    ) -> PyResult<(ParsedFunction, Option<Vec<RumbaType>>)> {
         let Some(value) = self.globals.get_item(name)? else {
             return Err(unsupported(format!("unsupported call to {name}")));
         };
-        if !value.hasattr("__code__")? {
-            return Err(unsupported(format!("unsupported call to {name}")));
-        }
-        parse_function(&value, self.call_stack.clone())
+        let Ok(dispatcher) = value.extract::<PyRef<'_, Dispatcher>>() else {
+            return Err(unsupported(
+                "calls to undecorated Python helper functions are not supported; decorate helper with @rumba.njit",
+            ));
+        };
+        let explicit_signature = dispatcher.explicit_signature();
+        let py_func = dispatcher.original_py_func(value.py());
+        let parsed = {
+            let py_func = py_func.bind(value.py());
+            parse_function(py_func, self.call_stack.clone())?
+        };
+        Ok((parsed, explicit_signature))
     }
 }
 

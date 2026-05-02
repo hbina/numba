@@ -5,6 +5,7 @@ import rumba
 from rumba import RumbaUnsupportedError
 
 
+@rumba.njit
 def _first(a):
     return a[0]
 

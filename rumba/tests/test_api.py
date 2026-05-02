@@ -19,6 +19,25 @@ _SCALAR_PAIRS = (
 )
 
 
+@rumba.njit
+def _typed_ast_helper(a):
+    return a + 1.5
+
+
+@rumba.njit
+def _uncalled_decorated_helper(a):
+    return a * 2
+
+
+@rumba.njit(signature=("int64",))
+def _explicit_int_helper(a):
+    return a + 1
+
+
+def _plain_python_helper(a):
+    return a + 1
+
+
 def test_import_and_version():
     assert rumba.__version__
 
@@ -289,21 +308,58 @@ def test_inspect_typed_ast_records_if_test_bool_and_loop_index():
 
 
 def test_inspect_typed_ast_exposes_helper_return_type():
-    def helper(a):
-        return a + 1.5
-
     @rumba.njit
     def use_helper(a):
-        return helper(a)
+        return _typed_ast_helper(a)
 
-    assert use_helper(2) == pytest.approx(3.5)
+    assert use_helper(2.0) == pytest.approx(3.5)
     call = use_helper.inspect_typed_ast()["body"][0]["value"]
 
     assert call["kind"] == "Call"
     assert call["type"] == "float64"
     assert call["reason"] == "helper_return"
-    assert call["helper"]["name"] == "helper"
+    assert call["helper"]["name"] == "_typed_ast_helper"
     assert call["helper"]["return_type"] == "float64"
+
+
+def test_undecorated_module_level_helper_call_raises():
+    @rumba.njit
+    def use_helper(a):
+        return _plain_python_helper(a)
+
+    with pytest.raises(
+        RumbaUnsupportedError,
+        match="calls to undecorated Python helper functions are not supported",
+    ):
+        use_helper(1)
+
+
+def test_decorated_helper_works_before_direct_compilation():
+    assert _uncalled_decorated_helper.signatures == []
+
+    @rumba.njit
+    def use_helper(a):
+        return _uncalled_decorated_helper(a)
+
+    assert use_helper(3) == 6
+    assert _uncalled_decorated_helper.signatures == []
+
+
+def test_explicit_helper_signature_match_works():
+    @rumba.njit
+    def use_helper(a):
+        return _explicit_int_helper(a)
+
+    assert use_helper(4) == 5
+
+
+def test_explicit_helper_signature_mismatch_raises():
+    @rumba.njit
+    def use_helper(a):
+        return _explicit_int_helper(a)
+
+    with pytest.raises(RumbaUnsupportedError, match="does not match explicit helper signature"):
+        use_helper(1.5)
 
 
 def test_unsupported_list_argument_raises():

@@ -81,7 +81,10 @@ impl Dispatcher {
         };
         if self.debug {
             eprintln!("[rumba-debug] call: function: {}", self.function_name(py));
-            eprintln!("[rumba-debug] call: positional argument count: {}", args.len());
+            eprintln!(
+                "[rumba-debug] call: positional argument count: {}",
+                args.len()
+            );
             eprintln!(
                 "[rumba-debug] call: selected signature: [{}]",
                 format_signature(&signature)
@@ -176,6 +179,14 @@ impl Dispatcher {
 }
 
 impl Dispatcher {
+    pub(crate) fn original_py_func(&self, py: Python<'_>) -> Py<PyAny> {
+        self.py_func.clone_ref(py)
+    }
+
+    pub(crate) fn explicit_signature(&self) -> Option<Vec<RumbaType>> {
+        self.explicit_signature.clone()
+    }
+
     pub(crate) fn new(
         py_func: Py<PyAny>,
         cache: bool,

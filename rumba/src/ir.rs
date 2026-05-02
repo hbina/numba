@@ -1,3 +1,5 @@
+use crate::types::RumbaType;
+
 #[derive(Clone, Debug)]
 pub(crate) struct ParsedFunction {
     pub(crate) name: String,
@@ -55,6 +57,7 @@ pub(crate) enum ExprNode {
     Name(String),
     Call {
         function: Box<ParsedFunction>,
+        explicit_signature: Option<Vec<RumbaType>>,
         args: Vec<ExprNode>,
     },
     Len(Box<ExprNode>),

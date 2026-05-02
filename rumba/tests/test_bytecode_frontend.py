@@ -6,10 +6,12 @@ from rumba import RumbaUnsupportedError
 _COMPARISON_OPERATORS = ("<", "<=", "==", "!=", ">", ">=")
 
 
+@rumba.njit
 def _helper_add(a, b):
     return a + b
 
 
+@rumba.njit
 def _helper_weighted(a, b, c):
     return a + b * c
 
