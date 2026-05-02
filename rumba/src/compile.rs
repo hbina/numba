@@ -31,9 +31,7 @@ pub(crate) fn compile_parsed_function(
     let requires_writable_arrays = has_store_index(&parsed.function.body);
     let typed = type_function(parsed.function, signature.clone())?;
     if debug {
-        eprintln!(
-            "[rumba-debug] compile: requires_writable_arrays: {requires_writable_arrays}"
-        );
+        eprintln!("[rumba-debug] compile: requires_writable_arrays: {requires_writable_arrays}");
         eprintln!("[rumba-debug] compile: typed function: {typed:#?}");
         eprintln!(
             "[rumba-debug] compile: inferred return type: {}",
@@ -61,7 +59,10 @@ pub(crate) fn compile_parsed_function(
     let library_path = build_dir.join(format!("module{}", shared_suffix()?));
     if debug {
         eprintln!("[rumba-debug] compile: cache key: {key}");
-        eprintln!("[rumba-debug] compile: cache directory: {}", build_dir.display());
+        eprintln!(
+            "[rumba-debug] compile: cache directory: {}",
+            build_dir.display()
+        );
         eprintln!(
             "[rumba-debug] compile: source path: {}",
             source_path.display()
@@ -89,6 +90,7 @@ pub(crate) fn compile_parsed_function(
         source_path.display().to_string(),
         "-o".to_string(),
         library_path.display().to_string(),
+        "-lm".to_string(),
     ];
     if debug {
         eprintln!("[rumba-debug] compile: command: {}", command.join(" "));

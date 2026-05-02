@@ -164,11 +164,11 @@ def test_unsupported_list_indexing_raises_during_frontend_parsing():
 
 def test_unsupported_call_other_than_range_raises():
     @rumba.njit
-    def use_abs(x):
-        return abs(x)
+    def use_sum(x):
+        return sum(x)
 
-    with pytest.raises(RumbaUnsupportedError, match="unsupported call to abs"):
-        use_abs(1)
+    with pytest.raises(RumbaUnsupportedError, match="unsupported call to sum"):
+        use_sum(1)
 
 
 def test_unsupported_closure_raises():

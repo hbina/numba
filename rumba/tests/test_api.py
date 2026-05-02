@@ -1,4 +1,6 @@
 from pathlib import Path
+import math
+import math as m
 
 import pytest
 
@@ -342,6 +344,69 @@ def test_inspect_typed_ast_exposes_helper_return_type():
     assert call["reason"] == "helper_return"
     assert call["helper"]["name"] == "_typed_ast_helper"
     assert call["helper"]["return_type"] == "float64"
+
+
+def test_builtin_scalar_intrinsics_execute_and_inspect_as_intrinsics():
+    @rumba.njit
+    def use_intrinsics(a, b):
+        return max(a, b) + min(a, b) + abs(a)
+
+    assert use_intrinsics(-5, 2) == 2
+    typed = use_intrinsics.inspect_typed_ast()
+    value = typed["body"][0]["value"]
+
+    assert value["kind"] == "BinOp"
+    assert value["left"]["kind"] == "BinOp"
+    assert value["left"]["left"]["kind"] == "IntrinsicCall"
+    assert value["left"]["left"]["intrinsic"] == "max"
+    assert value["left"]["right"]["kind"] == "IntrinsicCall"
+    assert value["left"]["right"]["intrinsic"] == "min"
+    assert value["right"]["kind"] == "IntrinsicCall"
+    assert value["right"]["intrinsic"] == "abs"
+    assert "rumba_max_int64_2" in use_intrinsics.inspect_c()
+    assert "rumba_min_int64_2" in use_intrinsics.inspect_c()
+
+
+def test_global_shadowing_builtin_intrinsic_requires_decorated_helper():
+    namespace = {"max": _plain_python_helper}
+    exec("def use_shadowed(a):\n    return max(a)\n", namespace)
+    use_shadowed = rumba.njit(namespace["use_shadowed"])
+
+    with pytest.raises(
+        RumbaUnsupportedError,
+        match="helper calls require @rumba.njit-decorated functions",
+    ):
+        use_shadowed(1)
+
+
+def test_math_module_intrinsics_execute_for_module_and_alias():
+    @rumba.njit
+    def use_math(a):
+        return math.sqrt(a) + math.sin(a) + m.cos(a)
+
+    assert use_math(4.0) == pytest.approx(math.sqrt(4.0) + math.sin(4.0) + math.cos(4.0))
+    typed = use_math.inspect_typed_ast()
+    c_source = use_math.inspect_c()
+
+    assert typed["body"][0]["value"]["left"]["left"]["intrinsic"] == "math.sqrt"
+    assert "sqrt((double)" in c_source
+    assert "sin((double)" in c_source
+    assert "cos((double)" in c_source
+
+
+def test_unsupported_calls_still_fail_clearly():
+    @rumba.njit
+    def use_sum(a):
+        return sum(a)
+
+    @rumba.njit
+    def use_gamma(a):
+        return math.gamma(a)
+
+    with pytest.raises(RumbaUnsupportedError, match="unsupported call to sum"):
+        use_sum(1)
+    with pytest.raises(RumbaUnsupportedError, match="attribute access"):
+        use_gamma(1.0)
 
 
 def test_undecorated_module_level_helper_call_raises():

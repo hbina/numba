@@ -9,6 +9,7 @@ mod dispatcher;
 mod errors;
 mod frontend;
 mod inspect;
+mod intrinsics;
 mod ir;
 mod runtime;
 mod types;

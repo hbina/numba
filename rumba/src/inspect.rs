@@ -136,10 +136,11 @@ fn expr_to_py(py: Python<'_>, expr: &TypedExpr) -> PyResult<PyObject> {
             out.set_item("helper", typed_function_to_py(py, function)?)?;
             out.set_item("args", exprs_to_py(py, args)?)?;
         }
-        TypedExprKind::Len(value) => {
-            out.set_item("kind", "Len")?;
-            out.set_item("reason", "array_len")?;
-            out.set_item("value", expr_to_py(py, value)?)?;
+        TypedExprKind::IntrinsicCall { intrinsic, args } => {
+            out.set_item("kind", "IntrinsicCall")?;
+            out.set_item("reason", "intrinsic")?;
+            out.set_item("intrinsic", intrinsic.name())?;
+            out.set_item("args", exprs_to_py(py, args)?)?;
         }
         TypedExprKind::Index { target, index } => {
             out.set_item("kind", "Index")?;

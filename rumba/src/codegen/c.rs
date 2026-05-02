@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
 
+use crate::intrinsics::IntrinsicId;
+use crate::types::RumbaType;
 use crate::types::ScalarType;
 use crate::typing::{helper_key, TypedExpr, TypedExprKind, TypedFunction, TypedStmt};
 
@@ -15,6 +17,7 @@ pub(crate) struct Emitter {
     lines: Vec<String>,
     helper_sources: Vec<String>,
     helper_cache: HashMap<String, String>,
+    intrinsic_cache: HashMap<String, String>,
 }
 
 impl Emitter {
@@ -26,6 +29,7 @@ impl Emitter {
             lines: Vec::new(),
             helper_sources: Vec::new(),
             helper_cache: HashMap::new(),
+            intrinsic_cache: HashMap::new(),
         }
     }
 
@@ -34,6 +38,7 @@ impl Emitter {
         let mut source = vec![
             "#include <stdbool.h>".to_string(),
             "#include <stdint.h>".to_string(),
+            "#include <math.h>".to_string(),
             String::new(),
             "typedef struct { int64_t *data; int64_t len; } rumba_array_i64;".to_string(),
             "typedef struct { double *data; int64_t len; } rumba_array_f64;".to_string(),
@@ -225,11 +230,8 @@ impl Emitter {
                     code: format!("{c_name}({code})"),
                 })
             }
-            TypedExprKind::Len(value) => {
-                let value = self.expr(value)?;
-                Ok(CExpr {
-                    code: format!("{}.len", value.code),
-                })
+            TypedExprKind::IntrinsicCall { intrinsic, args } => {
+                self.intrinsic_expr(*intrinsic, args, node.typ)
             }
             TypedExprKind::Index { target, index } => {
                 let target = self.expr(target)?;
@@ -263,6 +265,135 @@ impl Emitter {
             }
         }
     }
+
+    fn intrinsic_expr(
+        &mut self,
+        intrinsic: IntrinsicId,
+        args: &[TypedExpr],
+        return_type: RumbaType,
+    ) -> PyResult<CExpr> {
+        let arg_codes = args
+            .iter()
+            .map(|arg| self.expr(arg).map(|expr| expr.code))
+            .collect::<PyResult<Vec<_>>>()?;
+        let code = match intrinsic {
+            IntrinsicId::BuiltinLen => format!("{}.len", arg_codes[0]),
+            IntrinsicId::BuiltinAbs => {
+                let scalar_type = args[0].typ.as_scalar().expect("typed scalar abs");
+                match scalar_type {
+                    ScalarType::Float64 => format!("fabs({})", arg_codes[0]),
+                    ScalarType::Int64 => {
+                        let helper = self.ensure_intrinsic_helper("rumba_abs_i64", abs_i64_source);
+                        format!("{helper}({})", arg_codes[0])
+                    }
+                    ScalarType::Bool => unreachable!("bool abs rejected by typing"),
+                }
+            }
+            IntrinsicId::BuiltinMin | IntrinsicId::BuiltinMax => {
+                let scalar_type = return_type.as_scalar().expect("typed scalar min/max");
+                let helper = self.ensure_minmax_helper(intrinsic, scalar_type, args.len());
+                format!("{}({})", helper, arg_codes.join(", "))
+            }
+            IntrinsicId::MathSqrt
+            | IntrinsicId::MathSin
+            | IntrinsicId::MathCos
+            | IntrinsicId::MathTan
+            | IntrinsicId::MathExp
+            | IntrinsicId::MathLog
+            | IntrinsicId::MathFloor
+            | IntrinsicId::MathCeil => {
+                let c_name = match intrinsic {
+                    IntrinsicId::MathSqrt => "sqrt",
+                    IntrinsicId::MathSin => "sin",
+                    IntrinsicId::MathCos => "cos",
+                    IntrinsicId::MathTan => "tan",
+                    IntrinsicId::MathExp => "exp",
+                    IntrinsicId::MathLog => "log",
+                    IntrinsicId::MathFloor => "floor",
+                    IntrinsicId::MathCeil => "ceil",
+                    _ => unreachable!(),
+                };
+                format!("{c_name}((double)({}))", arg_codes[0])
+            }
+            IntrinsicId::NumpyMax | IntrinsicId::NumpyMin | IntrinsicId::NumpySum => {
+                let array_type = match args[0].typ {
+                    RumbaType::Array1D(element_type) => element_type,
+                    RumbaType::Scalar(_) => unreachable!("numpy reductions require array"),
+                };
+                let helper = self.ensure_numpy_reduction_helper(intrinsic, array_type);
+                format!("{helper}({})", arg_codes[0])
+            }
+        };
+        Ok(CExpr { code })
+    }
+
+    fn ensure_intrinsic_helper(&mut self, key: &str, source_fn: impl FnOnce() -> String) -> String {
+        if let Some(c_name) = self.intrinsic_cache.get(key) {
+            return c_name.clone();
+        }
+        let c_name = key.to_string();
+        self.helper_sources.push(source_fn());
+        self.intrinsic_cache.insert(key.to_string(), c_name.clone());
+        c_name
+    }
+
+    fn ensure_minmax_helper(
+        &mut self,
+        intrinsic: IntrinsicId,
+        scalar_type: ScalarType,
+        argc: usize,
+    ) -> String {
+        let op = if intrinsic == IntrinsicId::BuiltinMin {
+            "min"
+        } else {
+            "max"
+        };
+        let typ = scalar_type.c_type();
+        let key = format!("rumba_{op}_{}_{}", scalar_type.name(), argc);
+        if let Some(c_name) = self.intrinsic_cache.get(&key) {
+            return c_name.clone();
+        }
+        let params = (0..argc)
+            .map(|index| format!("{typ} a{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let cmp = if intrinsic == IntrinsicId::BuiltinMin {
+            "<"
+        } else {
+            ">"
+        };
+        let mut lines = vec![
+            format!("static {typ} {key}({params}) {{"),
+            "    ".to_string() + typ + " out = a0;",
+        ];
+        for index in 1..argc {
+            lines.push(format!("    if (a{index} {cmp} out) {{ out = a{index}; }}"));
+        }
+        lines.push("    return out;".to_string());
+        lines.push("}".to_string());
+        self.helper_sources.push(format!("{}\n", lines.join("\n")));
+        self.intrinsic_cache.insert(key.clone(), key.clone());
+        key
+    }
+
+    fn ensure_numpy_reduction_helper(
+        &mut self,
+        intrinsic: IntrinsicId,
+        element_type: ScalarType,
+    ) -> String {
+        let key = format!(
+            "rumba_{}_{}",
+            intrinsic.name().replace('.', "_"),
+            element_type.name()
+        );
+        if let Some(c_name) = self.intrinsic_cache.get(&key) {
+            return c_name.clone();
+        }
+        let source = numpy_reduction_source(&key, intrinsic, element_type);
+        self.helper_sources.push(source);
+        self.intrinsic_cache.insert(key.clone(), key.clone());
+        key
+    }
 }
 
 fn indent(level: usize) -> String {
@@ -285,6 +416,55 @@ fn cast_compare_operand(code: &str, target_type: ScalarType) -> String {
         ScalarType::Int64 => format!("(int64_t)({code})"),
         ScalarType::Bool => unreachable!("comparison operands are normalized to numeric types"),
     }
+}
+
+fn abs_i64_source() -> String {
+    [
+        "static int64_t rumba_abs_i64(int64_t value) {",
+        "    return value < 0 ? -value : value;",
+        "}",
+        "",
+    ]
+    .join("\n")
+}
+
+fn numpy_reduction_source(name: &str, intrinsic: IntrinsicId, element_type: ScalarType) -> String {
+    let c_type = element_type.c_type();
+    let array_type = match element_type {
+        ScalarType::Int64 => "rumba_array_i64",
+        ScalarType::Float64 => "rumba_array_f64",
+        ScalarType::Bool => unreachable!("bool arrays are not supported"),
+    };
+    let mut lines = vec![
+        format!("static {c_type} {name}({array_type} a) {{"),
+        format!(
+            "    {c_type} out = {};",
+            if intrinsic == IntrinsicId::NumpySum {
+                "0"
+            } else {
+                "a.data[0]"
+            }
+        ),
+    ];
+    match intrinsic {
+        IntrinsicId::NumpySum => {
+            lines.push("    for (int64_t i = 0; i < a.len; i++) {".to_string());
+            lines.push("        out += a.data[i];".to_string());
+        }
+        IntrinsicId::NumpyMax => {
+            lines.push("    for (int64_t i = 1; i < a.len; i++) {".to_string());
+            lines.push("        if (a.data[i] > out) { out = a.data[i]; }".to_string());
+        }
+        IntrinsicId::NumpyMin => {
+            lines.push("    for (int64_t i = 1; i < a.len; i++) {".to_string());
+            lines.push("        if (a.data[i] < out) { out = a.data[i]; }".to_string());
+        }
+        _ => unreachable!("not a numpy reduction"),
+    }
+    lines.push("    }".to_string());
+    lines.push("    return out;".to_string());
+    lines.push("}".to_string());
+    format!("{}\n", lines.join("\n"))
 }
 
 trait UnarySymbol {

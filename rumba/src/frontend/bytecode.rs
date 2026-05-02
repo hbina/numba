@@ -3,8 +3,10 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use crate::dispatcher::Dispatcher;
 use crate::errors::unsupported;
-use crate::ir::{BinOp, CmpOp, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp};
-use crate::types::RumbaType;
+use crate::intrinsics::IntrinsicId;
+use crate::ir::{
+    BinOp, CallTarget, CmpOp, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp,
+};
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -80,6 +82,10 @@ pub(crate) struct BasicBlock {
 enum StackValue {
     Expr(ExprNode),
     Name(String),
+    Attr {
+        owner: String,
+        attr: String,
+    },
     CallRange(Vec<ExprNode>),
     InplaceBinOp {
         left: ExprNode,
@@ -239,10 +245,16 @@ impl<'a> BytecodeParser<'a> {
                 }
                 Opcode::LoadGlobal => stack.push(StackValue::Name(self.name_operand(inst)?)),
                 Opcode::LoadAttr => {
-                    return Err(unsupported(format!(
-                        "attribute access .{} is not supported",
-                        self.name_operand(inst)?
-                    )));
+                    let attr = self.name_operand(inst)?;
+                    match pop_stack(&mut stack)? {
+                        StackValue::Name(owner) => stack.push(StackValue::Attr { owner, attr }),
+                        _ => {
+                            return Err(unsupported(format!(
+                                "attribute access .{} is not supported",
+                                attr
+                            )));
+                        }
+                    }
                 }
                 Opcode::StoreFast => {
                     let name = self.local_name(inst)?;
@@ -328,20 +340,14 @@ impl<'a> BytecodeParser<'a> {
                         StackValue::Name(name) if name == "range" => {
                             stack.push(StackValue::CallRange(args));
                         }
-                        StackValue::Name(name) if name == "len" => {
-                            if args.len() != 1 {
-                                return Err(unsupported("len expects one argument"));
-                            }
-                            stack.push(StackValue::Expr(ExprNode::Len(Box::new(
-                                args.into_iter().next().unwrap(),
-                            ))));
-                        }
                         StackValue::Name(name) => {
-                            let (function, explicit_signature) =
-                                self.resolve_global_function(&name)?;
+                            let target = self.resolve_global_call(&name)?;
+                            stack.push(StackValue::Expr(ExprNode::Call { target, args }));
+                        }
+                        StackValue::Attr { owner, attr } => {
+                            let intrinsic = self.resolve_module_intrinsic(&owner, &attr)?;
                             stack.push(StackValue::Expr(ExprNode::Call {
-                                function: Box::new(function),
-                                explicit_signature,
+                                target: CallTarget::Intrinsic(intrinsic),
                                 args,
                             }));
                         }
@@ -535,11 +541,11 @@ impl<'a> BytecodeParser<'a> {
         }
     }
 
-    fn resolve_global_function(
-        &self,
-        name: &str,
-    ) -> PyResult<(ParsedFunction, Option<Vec<RumbaType>>)> {
+    fn resolve_global_call(&self, name: &str) -> PyResult<CallTarget> {
         let Some(value) = self.globals.get_item(name)? else {
+            if let Some(intrinsic) = IntrinsicId::from_builtin(name) {
+                return Ok(CallTarget::Intrinsic(intrinsic));
+            }
             return Err(unsupported(format!("unsupported call to {name}")));
         };
         let Ok(dispatcher) = value.extract::<PyRef<'_, Dispatcher>>() else {
@@ -553,7 +559,28 @@ impl<'a> BytecodeParser<'a> {
             let py_func = py_func.bind(value.py());
             parse_function(py_func, self.call_stack.clone())?
         };
-        Ok((parsed, explicit_signature))
+        Ok(CallTarget::Helper {
+            function: Box::new(parsed),
+            explicit_signature,
+        })
+    }
+
+    fn resolve_module_intrinsic(&self, owner: &str, attr: &str) -> PyResult<IntrinsicId> {
+        let Some(value) = self.globals.get_item(owner)? else {
+            return Err(unsupported(format!("unsupported call to {owner}.{attr}")));
+        };
+        let module_name = value
+            .getattr("__name__")
+            .ok()
+            .and_then(|name| name.extract::<String>().ok());
+        if let Some(module_name) = module_name {
+            if let Some(intrinsic) = IntrinsicId::from_module_attr(&module_name, attr) {
+                return Ok(intrinsic);
+            }
+        }
+        Err(unsupported(format!(
+            "attribute access .{attr} is not supported"
+        )))
     }
 }
 

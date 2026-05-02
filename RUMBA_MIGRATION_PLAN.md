@@ -60,7 +60,8 @@ arguments, arithmetic, comparisons, simple `if` statements, `range` loops,
 local assignment, augmented assignment, helper function calls, and scalar
 returns. It also supports initial 1D contiguous NumPy array handling for
 `int64` and `float64`, including `len(array)`, element load/store, dtype and
-layout validation, and scalar-returning kernels that mutate arrays in place.
+layout validation, selected builtin/math/NumPy reduction intrinsics, and
+scalar-returning kernels that mutate arrays in place.
 
 Current known gap in the chosen Python syntax subset:
 
@@ -132,7 +133,7 @@ explicitly added to this table.
 | Comparisons | Supported for scalar values | Partial | Support equality and ordering comparisons for scalar numeric/bool combinations where typing and C lowering are defined. |
 | Boolean conditions | Supported | Partial | Conditions must type as `bool`. Truthiness for arrays, objects, lists, tuples, and arbitrary values remains unsupported. |
 | Unary operators | Supported for scalar values | Partial | Support unary numeric signs and boolean `not` for typed scalar expressions. |
-| Function calls | Supported for selected helper calls | Partial | Support direct calls to top-level `@rumba.njit` helper functions without Python fallback. Plain Python helpers, local nested helpers/closures, and recursive helpers are rejected. |
+| Function calls | Supported for selected helper and intrinsic calls | Partial | Support direct calls to top-level `@rumba.njit` helper functions and explicit native intrinsics for `len`, scalar `min`/`max`/`abs`, selected `math.*` calls, and 1D NumPy `max`/`min`/`sum`, all without Python fallback. Plain Python helpers, local nested helpers/closures, and recursive helpers are rejected. |
 
 Everything outside this table should be treated as unsupported by default. New
 syntax must be added deliberately with frontend tests, typing tests, C codegen
@@ -279,8 +280,8 @@ Out of scope for this milestone:
 - General Python iterators or iteration over containers.
 - Lists, dicts, sets, tuples, comprehensions, generators, exceptions, classes,
   recursion, and closures unless a later milestone explicitly adds them.
-- Broad NumPy, math module, broadcasting, reductions, `np.empty`, GPU, or
-  parallel support.
+- Broad NumPy, array allocation/constructors such as `np.empty`/`np.zeros`,
+  broadcasting, GPU, or parallel support.
 
 ### Milestone 9: Packaging And Developer Workflow
 
@@ -340,3 +341,4 @@ Python:
 | 2026-04-27 | Removed the Python package implementation and made `rumba` a top-level Rust/PyO3 extension module. |
 | 2026-04-27 | Removed the Python package implementation files; Python remains limited to public API tests and optional examples. |
 | 2026-04-28 | Added dedicated Rust typing pass, compiler/cache inspection helpers, Python 3.12 bytecode frontend coverage for the current subset, and initial 1D NumPy array interop. |
+| 2026-05-02 | Added explicit native intrinsic resolution, typing, inspection, and C lowering for selected builtins, `math` calls, and 1D NumPy reductions while preserving rejection of arbitrary Python helpers. |

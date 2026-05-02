@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 
 use crate::errors::unsupported;
-use crate::ir::{BinOp, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp};
+use crate::intrinsics::IntrinsicId;
+use crate::ir::{BinOp, CallTarget, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp};
 use crate::types::{format_signature, promote_numeric, RumbaType, ScalarType};
 
 #[derive(Clone, Debug)]
@@ -63,7 +64,10 @@ pub(crate) enum TypedExprKind {
         function: Box<TypedFunction>,
         args: Vec<TypedExpr>,
     },
-    Len(Box<TypedExpr>),
+    IntrinsicCall {
+        intrinsic: IntrinsicId,
+        args: Vec<TypedExpr>,
+    },
     Index {
         target: Box<TypedExpr>,
         index: Box<TypedExpr>,
@@ -284,49 +288,52 @@ impl TypePass {
                     typ,
                 })
             }
-            ExprNode::Call {
-                function,
-                explicit_signature,
-                args,
-            } => {
+            ExprNode::Call { target, args } => {
                 let args = args
                     .iter()
                     .map(|arg| self.expr(arg))
                     .collect::<PyResult<Vec<_>>>()?;
-                let signature = args.iter().map(|arg| arg.typ).collect::<Vec<_>>();
-                if let Some(explicit_signature) = explicit_signature {
-                    if explicit_signature != &signature {
-                        return Err(unsupported(format!(
-                            "helper call signature [{}] does not match explicit helper signature [{}]",
-                            format_signature(&signature),
-                            format_signature(explicit_signature)
-                        )));
+                match target {
+                    CallTarget::Helper {
+                        function,
+                        explicit_signature,
+                    } => {
+                        let signature = args.iter().map(|arg| arg.typ).collect::<Vec<_>>();
+                        if let Some(explicit_signature) = explicit_signature {
+                            if explicit_signature != &signature {
+                                return Err(unsupported(format!(
+                                    "helper call signature [{}] does not match explicit helper signature [{}]",
+                                    format_signature(&signature),
+                                    format_signature(explicit_signature)
+                                )));
+                            }
+                        }
+                        let key = parsed_helper_key(function, &signature);
+                        let function = if let Some(function) = self.helper_cache.get(&key) {
+                            function.clone()
+                        } else {
+                            let function = type_function((**function).clone(), signature)?;
+                            self.helper_cache.insert(key, function.clone());
+                            function
+                        };
+                        Ok(TypedExpr {
+                            typ: RumbaType::Scalar(function.return_type),
+                            kind: TypedExprKind::Call {
+                                function: Box::new(function),
+                                args,
+                            },
+                        })
                     }
-                }
-                let key = parsed_helper_key(function, &signature);
-                let function = if let Some(function) = self.helper_cache.get(&key) {
-                    function.clone()
-                } else {
-                    let function = type_function((**function).clone(), signature)?;
-                    self.helper_cache.insert(key, function.clone());
-                    function
-                };
-                Ok(TypedExpr {
-                    typ: RumbaType::Scalar(function.return_type),
-                    kind: TypedExprKind::Call {
-                        function: Box::new(function),
-                        args,
-                    },
-                })
-            }
-            ExprNode::Len(value) => {
-                let value = self.expr(value)?;
-                match value.typ {
-                    RumbaType::Array1D(_) => Ok(TypedExpr {
-                        kind: TypedExprKind::Len(Box::new(value)),
-                        typ: RumbaType::Scalar(ScalarType::Int64),
-                    }),
-                    RumbaType::Scalar(_) => Err(unsupported("len expects a 1D numpy array")),
+                    CallTarget::Intrinsic(intrinsic) => {
+                        let typ = intrinsic.type_call(&args)?;
+                        Ok(TypedExpr {
+                            typ,
+                            kind: TypedExprKind::IntrinsicCall {
+                                intrinsic: *intrinsic,
+                                args,
+                            },
+                        })
+                    }
                 }
             }
             ExprNode::Index { target, index } => {

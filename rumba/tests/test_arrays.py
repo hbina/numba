@@ -82,6 +82,57 @@ def test_helper_function_reads_array():
     assert "rumba_helper_0" in use_helper.inspect_c()
 
 
+def test_len_builtin_intrinsic_returns_array_length():
+    @rumba.njit
+    def size(a):
+        return len(a)
+
+    values = np.array([4, 9, 16], dtype=np.int64)
+
+    assert size(values) == 3
+    call = size.inspect_typed_ast()["body"][0]["value"]
+    assert call["kind"] == "IntrinsicCall"
+    assert call["intrinsic"] == "len"
+    assert call["type"] == "int64"
+
+
+def test_numpy_reduction_intrinsics_for_int64_and_float64_arrays():
+    @rumba.njit
+    def int_reductions(a):
+        return np.max(a) + np.min(a) + np.sum(a)
+
+    @rumba.njit
+    def float_reduction(a):
+        return np.sum(a)
+
+    ints = np.array([4, 1, 7], dtype=np.int64)
+    floats = np.array([1.5, 2.25, 3.75], dtype=np.float64)
+
+    assert int_reductions(ints) == 20
+    assert float_reduction(floats) == pytest.approx(7.5)
+
+    typed = int_reductions.inspect_typed_ast()
+    value = typed["body"][0]["value"]
+    assert value["left"]["left"]["kind"] == "IntrinsicCall"
+    assert value["left"]["left"]["intrinsic"] == "numpy.max"
+    assert value["left"]["right"]["intrinsic"] == "numpy.min"
+    assert value["right"]["intrinsic"] == "numpy.sum"
+
+    c_source = int_reductions.inspect_c()
+    assert "static int64_t rumba_numpy_max_int64" in c_source
+    assert "static int64_t rumba_numpy_min_int64" in c_source
+    assert "static int64_t rumba_numpy_sum_int64" in c_source
+
+
+def test_unsupported_numpy_constructor_call_raises():
+    @rumba.njit
+    def make_zeros(n):
+        return np.zeros(n)
+
+    with pytest.raises(RumbaUnsupportedError, match="attribute access"):
+        make_zeros(3)
+
+
 def test_shape_is_unsupported():
     @rumba.njit
     def use_shape(a):
@@ -185,9 +236,9 @@ def test_inspect_typed_ast_records_array_len_index_and_store_types():
 
     assert typed["locals"]["last"] == "int64"
     assert assign["target_type"] == "int64"
-    assert assign["value"]["left"]["kind"] == "Len"
+    assert assign["value"]["left"]["kind"] == "IntrinsicCall"
     assert assign["value"]["left"]["type"] == "int64"
-    assert assign["value"]["left"]["reason"] == "array_len"
+    assert assign["value"]["left"]["intrinsic"] == "len"
     assert store["kind"] == "StoreIndex"
     assert store["element_type"] == "float64"
     assert store["value_type"] == "float64"

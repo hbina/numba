@@ -1,3 +1,4 @@
+use crate::intrinsics::IntrinsicId;
 use crate::types::RumbaType;
 
 #[derive(Clone, Debug)]
@@ -56,11 +57,9 @@ pub(crate) enum ExprNode {
     Constant(ConstantValue),
     Name(String),
     Call {
-        function: Box<ParsedFunction>,
-        explicit_signature: Option<Vec<RumbaType>>,
+        target: CallTarget,
         args: Vec<ExprNode>,
     },
-    Len(Box<ExprNode>),
     Index {
         target: Box<ExprNode>,
         index: Box<ExprNode>,
@@ -79,6 +78,15 @@ pub(crate) enum ExprNode {
         op: CmpOp,
         right: Box<ExprNode>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CallTarget {
+    Helper {
+        function: Box<ParsedFunction>,
+        explicit_signature: Option<Vec<RumbaType>>,
+    },
+    Intrinsic(IntrinsicId),
 }
 
 #[derive(Clone, Debug)]
