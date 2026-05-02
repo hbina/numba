@@ -194,7 +194,7 @@ fn expr_to_py(py: Python<'_>, expr: &TypedExpr) -> PyResult<PyObject> {
         }
         TypedExprKind::BinOp { left, op, right } => {
             out.set_item("kind", "BinOp")?;
-            out.set_item("reason", "promote_numeric")?;
+            out.set_item("reason", "exact_scalar_op")?;
             out.set_item("op", bin_op_name(*op))?;
             out.set_item("left", expr_to_py(py, left)?)?;
             out.set_item("right", expr_to_py(py, right)?)?;

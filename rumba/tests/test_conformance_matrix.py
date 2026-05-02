@@ -40,13 +40,40 @@ FAILURE_STATUSES = frozenset(
 
 EXPECTED_RUMBA_FAILURES = frozenset(
     {
+        "generated_binary_add_int64_float64",
+        "generated_binary_mul_int64_float64",
+        "generated_compare_less_int64_float64",
+        "generated_branch_distance_int64_float64",
+        "generated_binary_add_int64_bool",
+        "generated_binary_mul_int64_bool",
+        "generated_compare_less_int64_bool",
+        "generated_branch_distance_int64_bool",
+        "generated_binary_add_float64_int64",
+        "generated_binary_mul_float64_int64",
+        "generated_compare_less_float64_int64",
+        "generated_branch_distance_float64_int64",
         "generated_binary_add_float64_bool",
         "generated_binary_mul_float64_bool",
+        "generated_compare_less_float64_bool",
         "generated_branch_distance_float64_bool",
         "generated_binary_add_bool_float64",
         "generated_binary_mul_bool_float64",
+        "generated_compare_less_bool_float64",
         "generated_branch_distance_bool_float64",
+        "generated_binary_add_bool_int64",
+        "generated_binary_mul_bool_int64",
+        "generated_compare_less_bool_int64",
+        "generated_branch_distance_bool_int64",
         "generated_binary_add_bool_bool",
+        "generated_binary_mul_bool_bool",
+        "generated_compare_less_bool_bool",
+        "generated_branch_distance_bool_bool",
+        "generated_array_plus_scalar_first_array_int64_float64",
+        "generated_scalar_plus_array_first_array_int64_float64",
+        "generated_array_plus_scalar_first_array_float64_int64",
+        "generated_scalar_plus_array_first_array_float64_int64",
+        "generated_array_plus_array_first_array_int64_array_float64",
+        "generated_array_plus_array_first_array_float64_array_int64",
     }
 )
 
@@ -252,6 +279,27 @@ def generate_scalar_cases() -> list[Case]:
             "return total",
         )
     )
+    cases.append(
+        _make_case(
+            "generated_explicit_cast_int_float64",
+            lambda: (1.5,),
+            "return int(a0) + 1",
+        )
+    )
+    cases.append(
+        _make_case(
+            "generated_explicit_cast_float_int64",
+            lambda: (1,),
+            "return float(a0) + 2.5",
+        )
+    )
+    cases.append(
+        _make_case(
+            "generated_explicit_cast_bool_int64",
+            lambda: (0,),
+            "return bool(a0)",
+        )
+    )
 
     return cases
 
@@ -339,7 +387,7 @@ def generate_structured_cases() -> list[Case]:
             lambda: (STRUCT_ARRAY_SPEC.factory(),),
             "total = 0.0\n"
             "for i in range(len(a0)):\n"
-            "    total += a0[i]['a'] + a0[i]['b']\n"
+            "    total += float(a0[i]['a']) + a0[i]['b']\n"
             "return total",
         ),
         _make_case(
@@ -347,7 +395,7 @@ def generate_structured_cases() -> list[Case]:
             lambda: (STRUCT_ARRAY_SPEC.factory(), 2.5),
             "total = 0.0\n"
             "for i in range(len(a0)):\n"
-            "    total += a0[i]['a'] * a1 + a0[i]['b']\n"
+            "    total += float(a0[i]['a']) * a1 + a0[i]['b']\n"
             "return total",
         ),
         _make_case(

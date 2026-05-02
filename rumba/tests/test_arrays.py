@@ -80,8 +80,6 @@ def test_while_mutates_int64_array_in_place():
     ("values", "offset", "expected"),
     [
         (np.array([10, 20], dtype=np.int64), 7, 17),
-        (np.array([10, 20], dtype=np.int64), 2.5, 12.5),
-        (np.array([1.25, 2.5], dtype=np.float64), 7, 8.25),
         (np.array([1.25, 2.5], dtype=np.float64), 2.5, 3.75),
     ],
 )
@@ -97,8 +95,6 @@ def test_array_plus_scalar_arguments(values, offset, expected):
     ("offset", "values", "expected"),
     [
         (7, np.array([10, 20], dtype=np.int64), 17),
-        (2.5, np.array([10, 20], dtype=np.int64), 12.5),
-        (7, np.array([1.25, 2.5], dtype=np.float64), 8.25),
         (2.5, np.array([1.25, 2.5], dtype=np.float64), 3.75),
     ],
 )
@@ -139,13 +135,8 @@ def test_array_mutation_with_scalar_arguments(values, replacement, expected, mut
         ),
         (
             np.array([10, 20], dtype=np.int64),
-            np.array([1.25, 2.5], dtype=np.float64),
-            11.25,
-        ),
-        (
-            np.array([1.25, 2.5], dtype=np.float64),
             np.array([7, 8], dtype=np.int64),
-            8.25,
+            17,
         ),
         (
             np.array([1.25, 2.5], dtype=np.float64),
@@ -162,18 +153,18 @@ def test_array_plus_array_arguments(left, right, expected):
     assert add_first(left, right) == pytest.approx(expected)
 
 
-def test_mixed_array_scalar_inspect_c_signatures():
+def test_explicit_cast_array_scalar_inspect_c_signatures():
     @rumba.njit
     def array_then_scalar(a, x):
-        return a[0] + x
+        return float(a[0]) + x
 
     @rumba.njit
     def scalar_then_array(x, a):
-        return x + a[0]
+        return x + float(a[0])
 
     @rumba.njit
     def arrays(a, b):
-        return a[0] + b[0]
+        return a[0] + float(b[0])
 
     ints = np.array([10, 20], dtype=np.int64)
     floats = np.array([1.25, 2.5], dtype=np.float64)
@@ -421,7 +412,7 @@ def test_structured_array_field_sum_with_len_and_scalar_argument():
     def weighted(a, scale):
         total = 0.0
         for i in range(len(a)):
-            total += a[i]["count"] * scale + a[i]["weight"]
+            total += float(a[i]["count"]) * scale + a[i]["weight"]
         return total
 
     dtype = np.dtype([("count", np.uint64), ("weight", np.float64)])
@@ -498,7 +489,7 @@ def test_while_reads_and_writes_structured_array_fields():
         i = 0
         total = 0.0
         while i < n:
-            a[i]["weight"] = a[i]["count"] * 2.0
+            a[i]["weight"] = float(a[i]["count"]) * 2.0
             total += a[i]["weight"]
             i += 1
         return total

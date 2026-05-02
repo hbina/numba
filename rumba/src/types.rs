@@ -544,17 +544,3 @@ pub(crate) fn format_signature(signature: &[RumbaType]) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
-
-pub(crate) fn promote_numeric(
-    left: ScalarType,
-    right: ScalarType,
-    op: impl AsRef<str>,
-) -> ScalarType {
-    match op.as_ref() {
-        "Eq" | "NotEq" | "Lt" | "LtE" | "Gt" | "GtE" => ScalarType::Bool,
-        "Div" => ScalarType::Float64,
-        _ if left == ScalarType::Float64 || right == ScalarType::Float64 => ScalarType::Float64,
-        _ if left == ScalarType::Bool && right == ScalarType::Bool => ScalarType::Bool,
-        _ => ScalarType::Int64,
-    }
-}

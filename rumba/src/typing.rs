@@ -6,9 +6,7 @@ use pyo3::prelude::*;
 use crate::errors::unsupported;
 use crate::intrinsics::IntrinsicId;
 use crate::ir::{BinOp, CallTarget, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp};
-use crate::types::{
-    format_signature, promote_numeric, FieldType, RumbaType, ScalarType, StructDtype,
-};
+use crate::types::{format_signature, FieldType, RumbaType, ScalarType, StructDtype};
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypedFunction {
@@ -179,7 +177,13 @@ impl TypePass {
                 self.return_type = Some(match self.return_type {
                     None => expr_typ,
                     Some(current) if current == expr_typ => current,
-                    Some(current) => promote_numeric(current, expr_typ, "Add"),
+                    Some(current) => {
+                        return Err(exact_type_mismatch(
+                            "return values",
+                            current,
+                            expr_typ,
+                        ));
+                    }
                 });
                 Ok(TypedStmt::Return(expr))
             }
@@ -213,6 +217,21 @@ impl TypePass {
                 let expr = self.expr(value)?;
                 if expr.typ.as_scalar().is_none() {
                     return Err(unsupported("augmented assignment requires a scalar value"));
+                }
+                let target_scalar = target_type
+                    .as_scalar()
+                    .expect("augmented assignment target checked as scalar");
+                let value_scalar = expr
+                    .typ
+                    .as_scalar()
+                    .expect("augmented assignment value checked as scalar");
+                let result_type = type_binary_op(target_scalar, *op, value_scalar)?;
+                if result_type != target_scalar {
+                    return Err(unsupported(format!(
+                        "augmented assignment for local {name:?} produces {} but target is {}; use an explicit cast",
+                        result_type.name(),
+                        target_scalar.name()
+                    )));
                 }
                 Ok(TypedStmt::AugAssign {
                     name: name.clone(),
@@ -299,6 +318,7 @@ impl TypePass {
 
                 let env_before = self.env.clone();
                 let branch_only_before = self.branch_only.clone();
+                let return_type_before = self.return_type;
                 let body_continues = stmts_may_continue(body);
                 let else_continues = if orelse.is_empty() {
                     true
@@ -308,6 +328,7 @@ impl TypePass {
 
                 self.env = env_before.clone();
                 self.branch_only = branch_only_before.clone();
+                self.return_type = return_type_before;
                 let typed_body = body
                     .iter()
                     .map(|stmt| self.stmt(stmt))
@@ -318,6 +339,7 @@ impl TypePass {
 
                 self.env = env_before.clone();
                 self.branch_only = branch_only_before.clone();
+                self.return_type = return_type_before;
                 let typed_orelse = orelse
                     .iter()
                     .map(|stmt| self.stmt(stmt))
@@ -342,7 +364,10 @@ impl TypePass {
                         &else_env,
                     );
                 }
-                self.return_type = merge_return_types(body_return_type, else_return_type);
+                self.return_type = merge_return_types(
+                    return_type_before,
+                    merge_return_types(body_return_type, else_return_type)?,
+                )?;
                 self.helper_cache = body_helper_cache;
                 self.helper_cache.extend(else_helper_cache);
 
@@ -552,7 +577,7 @@ impl TypePass {
                     .as_scalar()
                     .ok_or_else(|| unsupported("binary operators require scalar operands"))?;
                 Ok(TypedExpr {
-                    typ: RumbaType::Scalar(promote_numeric(left_type, right_type, op.type_name())),
+                    typ: RumbaType::Scalar(type_binary_op(left_type, *op, right_type)?),
                     kind: TypedExprKind::BinOp {
                         left: Box::new(left),
                         op: *op,
@@ -562,9 +587,30 @@ impl TypePass {
             }
             ExprNode::UnaryOp { op, value } => {
                 let value = self.expr(value)?;
+                let value_type = value
+                    .typ
+                    .as_scalar()
+                    .ok_or_else(|| unsupported("unary operators require scalar operands"))?;
                 let typ = match op {
-                    UnaryOp::Not => RumbaType::Scalar(ScalarType::Bool),
-                    UnaryOp::USub | UnaryOp::UAdd => value.typ.clone(),
+                    UnaryOp::Not => {
+                        if value_type != ScalarType::Bool {
+                            return Err(unsupported(format!(
+                                "not requires bool operand, got {}; use an explicit bool(...) cast",
+                                value_type.name()
+                            )));
+                        }
+                        RumbaType::Scalar(ScalarType::Bool)
+                    }
+                    UnaryOp::USub | UnaryOp::UAdd => {
+                        if !value_type.is_numeric() {
+                            return Err(unsupported(format!(
+                                "unary {} requires int64 or float64 operand, got {}",
+                                op.name(),
+                                value_type.name()
+                            )));
+                        }
+                        value.typ.clone()
+                    }
                 };
                 Ok(TypedExpr {
                     typ,
@@ -577,9 +623,15 @@ impl TypePass {
             ExprNode::Compare { left, op, right } => {
                 let left = self.expr(left)?;
                 let right = self.expr(right)?;
-                if left.typ.as_scalar().is_none() || right.typ.as_scalar().is_none() {
-                    return Err(unsupported("comparisons require scalar operands"));
-                }
+                type_compare(
+                    left.typ
+                        .as_scalar()
+                        .ok_or_else(|| unsupported("comparisons require scalar operands"))?,
+                    op,
+                    right.typ
+                        .as_scalar()
+                        .ok_or_else(|| unsupported("comparisons require scalar operands"))?,
+                )?;
                 Ok(TypedExpr {
                     kind: TypedExprKind::Compare {
                         left: Box::new(left),
@@ -702,12 +754,82 @@ fn incompatible_branch_type(name: &str, left: RumbaType, right: RumbaType) -> py
     ))
 }
 
-fn merge_return_types(left: Option<ScalarType>, right: Option<ScalarType>) -> Option<ScalarType> {
+fn merge_return_types(
+    left: Option<ScalarType>,
+    right: Option<ScalarType>,
+) -> PyResult<Option<ScalarType>> {
     match (left, right) {
-        (None, None) => None,
-        (Some(typ), None) | (None, Some(typ)) => Some(typ),
-        (Some(left), Some(right)) if left == right => Some(left),
-        (Some(left), Some(right)) => Some(promote_numeric(left, right, "Return")),
+        (None, None) => Ok(None),
+        (Some(typ), None) | (None, Some(typ)) => Ok(Some(typ)),
+        (Some(left), Some(right)) if left == right => Ok(Some(left)),
+        (Some(left), Some(right)) => Err(exact_type_mismatch("return values", left, right)),
+    }
+}
+
+fn type_binary_op(left: ScalarType, op: BinOp, right: ScalarType) -> PyResult<ScalarType> {
+    if left != right {
+        return Err(exact_type_mismatch(op.type_name(), left, right));
+    }
+    if !left.is_numeric() {
+        return Err(unsupported(format!(
+            "{} requires int64 or float64 operands, got {}; use an explicit cast",
+            op.type_name(),
+            left.name()
+        )));
+    }
+    match op {
+        BinOp::Div => Ok(ScalarType::Float64),
+        BinOp::Add | BinOp::Sub | BinOp::Mult | BinOp::FloorDiv | BinOp::Mod => Ok(left),
+    }
+}
+
+fn type_compare(left: ScalarType, op: &crate::ir::CmpOp, right: ScalarType) -> PyResult<()> {
+    if left != right {
+        return Err(exact_type_mismatch("comparison", left, right));
+    }
+    match op {
+        crate::ir::CmpOp::Eq | crate::ir::CmpOp::NotEq => Ok(()),
+        crate::ir::CmpOp::Lt | crate::ir::CmpOp::LtE | crate::ir::CmpOp::Gt | crate::ir::CmpOp::GtE => {
+            if left.is_numeric() {
+                Ok(())
+            } else {
+                Err(unsupported(
+                    "ordering comparisons require int64 or float64 operands, got bool",
+                ))
+            }
+        }
+    }
+}
+
+fn exact_type_mismatch(context: &str, left: ScalarType, right: ScalarType) -> pyo3::PyErr {
+    unsupported(format!(
+        "{context} require exact matching scalar types, got {} and {}; use an explicit cast",
+        left.name(),
+        right.name()
+    ))
+}
+
+trait ScalarTypeExt {
+    fn is_numeric(self) -> bool;
+}
+
+impl ScalarTypeExt for ScalarType {
+    fn is_numeric(self) -> bool {
+        matches!(self, ScalarType::Int64 | ScalarType::Float64)
+    }
+}
+
+trait UnaryOpExt {
+    fn name(&self) -> &'static str;
+}
+
+impl UnaryOpExt for UnaryOp {
+    fn name(&self) -> &'static str {
+        match self {
+            UnaryOp::Not => "not",
+            UnaryOp::USub => "-",
+            UnaryOp::UAdd => "+",
+        }
     }
 }
 

@@ -32,6 +32,32 @@ Rumba functions only support returning scalar values such as `int64`, `float64`,
 and `bool`. Returning a NumPy array is unsupported and raises
 `RumbaUnsupportedError`.
 
+## No Implicit Scalar Conversions
+
+Rumba intentionally rejects implicit scalar conversions. Scalar arithmetic,
+comparisons, branch-local variable merging, and return merging require exact
+matching scalar types. Mixed expressions such as `1 + 1.0`, `1 < 2.0`, `not 1`,
+or returning `int64` on one path and `float64` on another raise
+`RumbaUnsupportedError`.
+
+Use explicit Python casts when conversion is intended:
+
+```python
+@rumba.njit
+def score(n, weight):
+    return float(n) + weight
+```
+
+The supported scalar casts are `int(...)`, `float(...)`, and `bool(...)` for
+all combinations of `int64`, `float64`, and `bool`. True division is the one
+operator-defined widening rule: `int64 / int64` returns `float64`, matching
+Python `/`. Floor division and modulo require identical numeric operand types
+and return that type.
+
+Scalar intrinsics are strict too. `min` and `max` require at least two non-bool
+scalar arguments of the same type, `abs` supports only `int64` and `float64`,
+and `math.*` intrinsics require `float64` arguments.
+
 If a function needs to produce array output, the caller must allocate the NumPy
 array and pass it as an output argument. The compiled function can then mutate
 that caller-owned buffer in place:

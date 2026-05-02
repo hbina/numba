@@ -94,20 +94,20 @@ def intrinsic_score_f64(values):
     magnitude = math.sqrt(abs(a))
     wave = math.sin(b) + math.cos(a)
     reduction = np.sum(values) + np.max(values) - np.min(values)
-    return magnitude + wave + reduction + len(values) + span
+    return magnitude + wave + reduction + float(len(values)) + span
 
 
 def structured_field_sum(records):
     total = 0.0
     for i in range(len(records)):
-        total += records[i]["count"] + records[i]["weight"]
+        total += float(records[i]["count"]) + records[i]["weight"]
     return total
 
 
 def structured_weighted_score(records, scale):
     total = 0.0
     for i in range(len(records)):
-        total += records[i]["count"] * scale + records[i]["weight"]
+        total += float(records[i]["count"]) * scale + records[i]["weight"]
     return total
 
 
@@ -128,7 +128,7 @@ def while_structured_update(records, n):
     i = 0
     total = 0.0
     while i < n:
-        records[i]["weight"] = records[i]["count"] * 2.0
+        records[i]["weight"] = float(records[i]["count"]) * 2.0
         total += records[i]["weight"]
         i += 1
     return total

@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 
 use crate::errors::unsupported;
-use crate::types::{promote_numeric, RumbaType, ScalarType};
+use crate::types::{RumbaType, ScalarType};
 use crate::typing::TypedExpr;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -10,6 +10,9 @@ pub(crate) enum IntrinsicId {
     BuiltinMin,
     BuiltinMax,
     BuiltinAbs,
+    BuiltinInt,
+    BuiltinFloat,
+    BuiltinBool,
     MathSqrt,
     MathSin,
     MathCos,
@@ -30,6 +33,9 @@ impl IntrinsicId {
             "min" => Some(Self::BuiltinMin),
             "max" => Some(Self::BuiltinMax),
             "abs" => Some(Self::BuiltinAbs),
+            "int" => Some(Self::BuiltinInt),
+            "float" => Some(Self::BuiltinFloat),
+            "bool" => Some(Self::BuiltinBool),
             _ => None,
         }
     }
@@ -57,6 +63,9 @@ impl IntrinsicId {
             Self::BuiltinMin => "min",
             Self::BuiltinMax => "max",
             Self::BuiltinAbs => "abs",
+            Self::BuiltinInt => "int",
+            Self::BuiltinFloat => "float",
+            Self::BuiltinBool => "bool",
             Self::MathSqrt => "math.sqrt",
             Self::MathSin => "math.sin",
             Self::MathCos => "math.cos",
@@ -89,9 +98,23 @@ impl IntrinsicId {
                         self.name()
                     )));
                 }
-                let mut out = scalar_arg(self, &args[0])?;
+                let out = scalar_arg(self, &args[0])?;
+                if out == ScalarType::Bool {
+                    return Err(unsupported(format!(
+                        "{} does not support bool arguments",
+                        self.name()
+                    )));
+                }
                 for arg in &args[1..] {
-                    out = promote_numeric(out, scalar_arg(self, arg)?, self.name());
+                    let typ = scalar_arg(self, arg)?;
+                    if typ != out {
+                        return Err(unsupported(format!(
+                            "{} requires exact matching scalar argument types, got {} and {}; use an explicit cast",
+                            self.name(),
+                            out.name(),
+                            typ.name()
+                        )));
+                    }
                 }
                 Ok(RumbaType::Scalar(out))
             }
@@ -103,6 +126,17 @@ impl IntrinsicId {
                 }
                 Ok(RumbaType::Scalar(typ))
             }
+            Self::BuiltinInt | Self::BuiltinFloat | Self::BuiltinBool => {
+                require_arg_count(self, args, 1)?;
+                scalar_arg(self, &args[0])?;
+                let typ = match self {
+                    Self::BuiltinInt => ScalarType::Int64,
+                    Self::BuiltinFloat => ScalarType::Float64,
+                    Self::BuiltinBool => ScalarType::Bool,
+                    _ => unreachable!(),
+                };
+                Ok(RumbaType::Scalar(typ))
+            }
             Self::MathSqrt
             | Self::MathSin
             | Self::MathCos
@@ -112,7 +146,14 @@ impl IntrinsicId {
             | Self::MathFloor
             | Self::MathCeil => {
                 require_arg_count(self, args, 1)?;
-                scalar_arg(self, &args[0])?;
+                let typ = scalar_arg(self, &args[0])?;
+                if typ != ScalarType::Float64 {
+                    return Err(unsupported(format!(
+                        "{} requires float64 argument, got {}; use an explicit float(...) cast",
+                        self.name(),
+                        typ.name()
+                    )));
+                }
                 Ok(RumbaType::Scalar(ScalarType::Float64))
             }
             Self::NumpyMax | Self::NumpyMin | Self::NumpySum => {

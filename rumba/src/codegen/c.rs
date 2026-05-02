@@ -332,8 +332,18 @@ impl Emitter {
                 })
             }
             TypedExprKind::BinOp { left, op, right } => {
+                let left_type = left.typ.as_scalar();
+                let right_type = right.typ.as_scalar();
                 let left = self.expr(left)?;
                 let right = self.expr(right)?;
+                if *op == crate::ir::BinOp::Div
+                    && left_type == Some(ScalarType::Int64)
+                    && right_type == Some(ScalarType::Int64)
+                {
+                    return Ok(CExpr {
+                        code: format!("((double)({}) / (double)({}))", left.code, right.code),
+                    });
+                }
                 Ok(CExpr {
                     code: format!("({} {} {})", left.code, op.symbol(), right.code),
                 })
@@ -345,13 +355,10 @@ impl Emitter {
                 })
             }
             TypedExprKind::Compare { left, op, right } => {
-                let target_type = compare_operand_type(left, right);
                 let left = self.expr(left)?;
                 let right = self.expr(right)?;
-                let left = cast_compare_operand(&left.code, target_type);
-                let right = cast_compare_operand(&right.code, target_type);
                 Ok(CExpr {
-                    code: format!("({left} {} {right})", op.symbol()),
+                    code: format!("({} {} {})", left.code, op.symbol(), right.code),
                 })
             }
         }
@@ -380,6 +387,14 @@ impl Emitter {
                     ScalarType::Bool => unreachable!("bool abs rejected by typing"),
                 }
             }
+            IntrinsicId::BuiltinInt | IntrinsicId::BuiltinFloat | IntrinsicId::BuiltinBool => {
+                match intrinsic {
+                    IntrinsicId::BuiltinInt => format!("(int64_t)({})", arg_codes[0]),
+                    IntrinsicId::BuiltinFloat => format!("(double)({})", arg_codes[0]),
+                    IntrinsicId::BuiltinBool => format!("(({}) != 0)", arg_codes[0]),
+                    _ => unreachable!(),
+                }
+            }
             IntrinsicId::BuiltinMin | IntrinsicId::BuiltinMax => {
                 let scalar_type = return_type.as_scalar().expect("typed scalar min/max");
                 let helper = self.ensure_minmax_helper(intrinsic, scalar_type, args.len());
@@ -404,7 +419,7 @@ impl Emitter {
                     IntrinsicId::MathCeil => "ceil",
                     _ => unreachable!(),
                 };
-                format!("{c_name}((double)({}))", arg_codes[0])
+                format!("{c_name}({})", arg_codes[0])
             }
             IntrinsicId::NumpyMax | IntrinsicId::NumpyMin | IntrinsicId::NumpySum => {
                 let array_type = match args[0].typ {
@@ -648,24 +663,6 @@ fn emit_struct_dtype(dtype: &StructDtype) -> String {
 
 fn indent(level: usize) -> String {
     "    ".repeat(level)
-}
-
-fn compare_operand_type(left: &TypedExpr, right: &TypedExpr) -> ScalarType {
-    let left_type = left.typ.as_scalar().expect("typed scalar comparison");
-    let right_type = right.typ.as_scalar().expect("typed scalar comparison");
-    if left_type == ScalarType::Float64 || right_type == ScalarType::Float64 {
-        ScalarType::Float64
-    } else {
-        ScalarType::Int64
-    }
-}
-
-fn cast_compare_operand(code: &str, target_type: ScalarType) -> String {
-    match target_type {
-        ScalarType::Float64 => format!("(double)({code})"),
-        ScalarType::Int64 => format!("(int64_t)({code})"),
-        ScalarType::Bool => unreachable!("comparison operands are normalized to numeric types"),
-    }
 }
 
 fn abs_i64_source() -> String {

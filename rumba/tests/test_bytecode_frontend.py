@@ -521,11 +521,22 @@ def test_decode_global_function_calls():
     assert "rumba_helper_1" in c_source
 
 
-def test_promoted_float_return_survives_typing_pass():
+def test_mixed_return_types_require_explicit_cast():
     @rumba.njit
     def choose(a):
-        if a > 0:
+        if a > 0.0:
             return 1
+        return 2.5
+
+    with pytest.raises(RumbaUnsupportedError, match="return values require exact matching"):
+        choose(3.0)
+
+
+def test_explicit_cast_allows_formerly_mixed_return_types():
+    @rumba.njit
+    def choose(a):
+        if a > 0.0:
+            return float(1)
         return 2.5
 
     assert choose(3.0) == pytest.approx(1.0)

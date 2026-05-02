@@ -8,15 +8,11 @@ import rumba
 from rumba import RumbaUnsupportedError
 
 _COMPARISON_OPERATORS = ("<", "<=", "==", "!=", ">", ">=")
-_SCALAR_PAIRS = (
+_ORDERABLE_SCALAR_PAIRS = (
     (1, 2),
-    (1, 2.5),
-    (1, True),
-    (1.5, 2),
     (1.5, 2.5),
-    (1.5, True),
-    (False, 1),
-    (False, 1.5),
+)
+_EQUALITY_SCALAR_PAIRS = _ORDERABLE_SCALAR_PAIRS + (
     (False, True),
 )
 
@@ -88,7 +84,7 @@ def test_njit_call_decorator_executes_float_branch():
 
 
 @pytest.mark.parametrize("op", _COMPARISON_OPERATORS)
-@pytest.mark.parametrize(("left", "right"), _SCALAR_PAIRS)
+@pytest.mark.parametrize(("left", "right"), _ORDERABLE_SCALAR_PAIRS)
 def test_scalar_comparisons_return_python_bool(op, left, right):
     namespace = {}
     exec(f"def compare(a, b):\n    return a {op} b\n", namespace)
@@ -100,16 +96,57 @@ def test_scalar_comparisons_return_python_bool(op, left, right):
     assert type(result) is bool
 
 
-@pytest.mark.parametrize("value", [1, 0.0, True])
-def test_unary_not_returns_python_bool_for_scalar_inputs(value):
+@pytest.mark.parametrize("op", ("==", "!="))
+@pytest.mark.parametrize(("left", "right"), _EQUALITY_SCALAR_PAIRS)
+def test_scalar_equality_comparisons_return_python_bool(op, left, right):
+    namespace = {}
+    exec(f"def compare(a, b):\n    return a {op} b\n", namespace)
+    compare = rumba.njit(namespace["compare"])
+
+    result = compare(left, right)
+
+    assert result == compare.py_func(left, right)
+    assert type(result) is bool
+
+
+@pytest.mark.parametrize(("left", "right"), [(1, 2.5), (1, True), (1.5, 2), (False, 1)])
+def test_mixed_scalar_comparisons_require_explicit_cast(left, right):
+    @rumba.njit
+    def compare(a, b):
+        return a == b
+
+    with pytest.raises(RumbaUnsupportedError, match="exact matching scalar types"):
+        compare(left, right)
+
+
+def test_bool_ordering_comparisons_are_rejected():
+    @rumba.njit
+    def compare(a, b):
+        return a < b
+
+    with pytest.raises(RumbaUnsupportedError, match="ordering comparisons require"):
+        compare(False, True)
+
+
+def test_unary_not_returns_python_bool_for_bool_input():
     @rumba.njit
     def invert(a):
         return not a
 
-    result = invert(value)
+    result = invert(True)
 
-    assert result == (not value)
+    assert result is False
     assert type(result) is bool
+
+
+@pytest.mark.parametrize("value", [1, 0.0])
+def test_unary_not_requires_bool(value):
+    @rumba.njit
+    def invert(a):
+        return not a
+
+    with pytest.raises(RumbaUnsupportedError, match="not requires bool"):
+        invert(value)
 
 
 def test_debug_option_emits_compilation_and_runtime_details(capfd):
@@ -148,7 +185,7 @@ def test_explicit_signature():
 def test_native_wrapper_handles_mixed_three_scalar_signature():
     @rumba.njit
     def combine(a, b, c):
-        return a + b + c
+        return float(a) + b + float(c)
 
     assert combine(1, 2.5, 3) == pytest.approx(6.5)
     c_source = combine.inspect_c()
@@ -272,7 +309,7 @@ def test_inspect_typed_ast_requires_compilation():
 def test_inspect_typed_ast_returns_single_compiled_artifact():
     @rumba.njit
     def add(a, b):
-        tmp = a + b
+        tmp = float(a) + b
         return tmp
 
     assert add(1, 2.5) == pytest.approx(3.5)
@@ -292,7 +329,9 @@ def test_inspect_typed_ast_returns_single_compiled_artifact():
     assert assign["target_type"] == "float64"
     assert assign["value"]["kind"] == "BinOp"
     assert assign["value"]["type"] == "float64"
-    assert assign["value"]["reason"] == "promote_numeric"
+    assert assign["value"]["reason"] == "exact_scalar_op"
+    assert assign["value"]["left"]["kind"] == "IntrinsicCall"
+    assert assign["value"]["left"]["intrinsic"] == "float"
 
 
 def test_inspect_typed_ast_requires_signature_for_multiple_artifacts():
@@ -400,6 +439,58 @@ def test_builtin_scalar_intrinsics_execute_and_inspect_as_intrinsics():
     assert "rumba_min_int64_2" in use_intrinsics.inspect_c()
 
 
+def test_explicit_scalar_casts_execute_and_inspect_as_intrinsics():
+    @rumba.njit
+    def use_casts(a, b, c):
+        if bool(c):
+            return int(a) + int(b)
+        return int(False)
+
+    assert use_casts(1.5, True, 1) == 2
+    assert use_casts(1.5, True, 0) == 0
+    typed = use_casts.inspect_typed_ast()
+    branch = typed["body"][0]
+    ret = branch["body"][0]["value"]
+    c_source = use_casts.inspect_c()
+
+    assert branch["test"]["kind"] == "IntrinsicCall"
+    assert branch["test"]["intrinsic"] == "bool"
+    assert ret["left"]["intrinsic"] == "int"
+    assert ret["right"]["intrinsic"] == "int"
+    assert "(int64_t)(a)" in c_source
+    assert "(int64_t)(b)" in c_source
+    assert "((c) != 0)" in c_source
+
+
+def test_explicit_float_and_bool_casts_execute():
+    @rumba.njit
+    def use_casts(a, b):
+        return float(a) + b
+
+    @rumba.njit
+    def truthy(a):
+        return bool(a)
+
+    assert use_casts(False, 1.5) == pytest.approx(1.5)
+    assert truthy(0) is False
+    assert truthy(1) is True
+    assert truthy(0.0) is False
+    assert truthy(1.25) is True
+
+
+def test_int64_true_division_returns_float64():
+    @rumba.njit
+    def divide(a, b):
+        return a / b
+
+    assert divide(3, 2) == pytest.approx(1.5)
+    typed = divide.inspect_typed_ast()
+    c_source = divide.inspect_c()
+
+    assert typed["return_type"] == "float64"
+    assert "((double)(a) / (double)(b))" in c_source
+
+
 def test_global_shadowing_builtin_intrinsic_requires_decorated_helper():
     namespace = {"max": _plain_python_helper}
     exec("def use_shadowed(a):\n    return max(a)\n", namespace)
@@ -422,9 +513,9 @@ def test_math_module_intrinsics_execute_for_module_and_alias():
     c_source = use_math.inspect_c()
 
     assert typed["body"][0]["value"]["left"]["left"]["intrinsic"] == "math.sqrt"
-    assert "sqrt((double)" in c_source
-    assert "sin((double)" in c_source
-    assert "cos((double)" in c_source
+    assert "sqrt(a)" in c_source
+    assert "sin(a)" in c_source
+    assert "cos(a)" in c_source
 
 
 def test_unsupported_calls_still_fail_clearly():

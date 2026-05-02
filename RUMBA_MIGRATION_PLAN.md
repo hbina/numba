@@ -66,9 +66,15 @@ model.
   `RumbaCompilationError` exception types.
 
 The first implemented subset supports scalar `int64`, `float64`, and `bool`
-arguments, arithmetic, comparisons, simple `if` statements, `range` loops,
-local assignment, augmented assignment, helper function calls, and scalar
-returns. It also supports initial 1D contiguous NumPy array handling for
+arguments, strict same-type arithmetic and comparisons, explicit scalar casts
+with `int(...)`, `float(...)`, and `bool(...)`, simple `if` statements,
+`range` loops, local assignment, augmented assignment, helper function calls,
+and scalar returns. Rumba intentionally does not perform implicit scalar
+conversions: mixed scalar arithmetic, mixed scalar comparisons, mixed return
+paths, and mixed branch-local assignment types are rejected unless the source
+contains an explicit cast. The `/` operator is the one operator-defined
+widening rule: `int64 / int64` returns `float64`, matching Python true
+division. It also supports initial 1D contiguous NumPy array handling for
 `int64` and `float64`, including `len(array)`, element load/store, dtype and
 layout validation, selected builtin/math/NumPy reduction intrinsics, and
 scalar-returning kernels that mutate arrays in place. Structured NumPy arrays
@@ -145,11 +151,11 @@ explicitly added to this table.
 | `break` / `continue` | Supported inside supported loops | Active | Add structured loop exits in the AST/lowering. Reject use outside loops and unsupported nested-control-flow cases clearly. |
 | Local assignment | Supported | Implemented | Continue to require statically typed local variables in the Rust typing pass. |
 | Augmented assignment | Supported | Implemented | Current support is scalar-focused; array element augmented assignment should remain explicit future work. |
-| Arithmetic operators | Supported for scalar numeric values | Partial | Maintain support for the scalar numeric subset first: `+`, `-`, `*`, `/`, `//`, `%`, unary `+`, unary `-`. Broader operators are not implied. |
-| Comparisons | Supported for scalar values | Partial | Support equality and ordering comparisons for scalar numeric/bool combinations where typing and C lowering are defined. |
+| Arithmetic operators | Supported for same-type scalar numeric values | Active | `+`, `-`, `*`, `//`, and `%` require matching `int64`/`int64` or `float64`/`float64` operands and reject `bool`. `/` also requires matching numeric operands but returns `float64`, so `int64 / int64 -> float64`. Broader operators are not implied. |
+| Comparisons | Supported for same-type scalar values | Active | Equality supports matching scalar types, including `bool == bool` and `bool != bool`. Ordering comparisons support only matching numeric operands and reject bool ordering. Mixed scalar comparisons require explicit casts. |
 | Boolean conditions | Supported | Partial | Conditions must type as `bool`. Truthiness for arrays, objects, lists, tuples, and arbitrary values remains unsupported. |
-| Unary operators | Supported for scalar values | Partial | Support unary numeric signs and boolean `not` for typed scalar expressions. |
-| Function calls | Supported for selected helper and intrinsic calls | Partial | Support direct calls to top-level `@rumba.njit` helper functions and explicit native intrinsics for `len`, scalar `min`/`max`/`abs`, selected `math.*` calls, and 1D NumPy `max`/`min`/`sum`, all without Python fallback. Plain Python helpers, local nested helpers/closures, and recursive helpers are rejected. |
+| Unary operators | Supported for scalar values | Active | Unary `+` and `-` support only `int64` and `float64`; `not` supports only `bool`. Use `bool(...)` for explicit truth conversion. |
+| Function calls | Supported for selected helper and intrinsic calls | Partial | Support direct calls to top-level `@rumba.njit` helper functions and explicit native intrinsics for `len`, scalar casts (`int`, `float`, `bool`), scalar `min`/`max`/`abs`, selected strict `math.*` calls, and 1D NumPy `max`/`min`/`sum`, all without Python fallback. Plain Python helpers, local nested helpers/closures, and recursive helpers are rejected. |
 
 Everything outside this table should be treated as unsupported by default. New
 syntax must be added deliberately with frontend tests, typing tests, C codegen
