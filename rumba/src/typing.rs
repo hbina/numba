@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
 
@@ -106,6 +106,7 @@ pub(crate) fn type_function(
         env,
         return_type: None,
         helper_cache: HashMap::new(),
+        branch_only: HashSet::new(),
     };
 
     let typed_body = body
@@ -138,6 +139,7 @@ struct TypePass {
     env: HashMap<String, RumbaType>,
     return_type: Option<ScalarType>,
     helper_cache: HashMap<String, TypedFunction>,
+    branch_only: HashSet<String>,
 }
 
 impl TypePass {
@@ -216,23 +218,53 @@ impl TypePass {
                 }
 
                 let env_before = self.env.clone();
+                let branch_only_before = self.branch_only.clone();
+                let body_continues = stmts_may_continue(body);
+                let else_continues = if orelse.is_empty() {
+                    true
+                } else {
+                    stmts_may_continue(orelse)
+                };
+
+                self.env = env_before.clone();
+                self.branch_only = branch_only_before.clone();
                 let typed_body = body
                     .iter()
                     .map(|stmt| self.stmt(stmt))
                     .collect::<PyResult<Vec<_>>>()?;
                 let body_env = self.env.clone();
-                let typed_orelse = if orelse.is_empty() {
-                    Vec::new()
-                } else {
-                    self.env = env_before;
-                    orelse
-                        .iter()
-                        .map(|stmt| self.stmt(stmt))
-                        .collect::<PyResult<Vec<_>>>()?
-                };
+                let body_return_type = self.return_type;
+                let body_helper_cache = self.helper_cache.clone();
+
+                self.env = env_before.clone();
+                self.branch_only = branch_only_before.clone();
+                let typed_orelse = orelse
+                    .iter()
+                    .map(|stmt| self.stmt(stmt))
+                    .collect::<PyResult<Vec<_>>>()?;
                 let else_env = self.env.clone();
-                self.env = body_env;
-                self.env.extend(else_env);
+                let else_return_type = self.return_type;
+                let else_helper_cache = self.helper_cache.clone();
+
+                self.env = merge_branch_envs(
+                    &env_before,
+                    &body_env,
+                    body_continues,
+                    &else_env,
+                    else_continues,
+                )?;
+                self.branch_only = branch_only_before;
+                if body_continues && else_continues {
+                    mark_branch_only_locals(
+                        &mut self.branch_only,
+                        &env_before,
+                        &body_env,
+                        &else_env,
+                    );
+                }
+                self.return_type = merge_return_types(body_return_type, else_return_type);
+                self.helper_cache = body_helper_cache;
+                self.helper_cache.extend(else_helper_cache);
 
                 Ok(TypedStmt::If {
                     test,
@@ -250,6 +282,12 @@ impl TypePass {
                 let start = self.expr(start)?;
                 let stop = self.expr(stop)?;
                 let step = self.expr(step)?;
+                require_int64(&start, "range start")?;
+                require_int64(&stop, "range stop")?;
+                require_int64(&step, "range step")?;
+                if matches!(step.kind, TypedExprKind::Constant(ConstantValue::Int(0))) {
+                    return Err(unsupported("range step cannot be zero"));
+                }
                 self.env
                     .insert(target.to_string(), RumbaType::Scalar(ScalarType::Int64));
                 let body = body
@@ -282,7 +320,15 @@ impl TypePass {
                     .env
                     .get(name)
                     .copied()
-                    .ok_or_else(|| unsupported(format!("unknown name {name:?}")))?;
+                    .ok_or_else(|| {
+                        if self.branch_only.contains(name) {
+                            unsupported(format!(
+                                "local variable {name:?} is assigned in only one branch and is used after the branch"
+                            ))
+                        } else {
+                            unsupported(format!("unknown name {name:?}"))
+                        }
+                    })?;
                 Ok(TypedExpr {
                     kind: TypedExprKind::Name(name.clone()),
                     typ,
@@ -404,6 +450,134 @@ impl TypePass {
                 })
             }
         }
+    }
+}
+
+fn merge_branch_envs(
+    before: &HashMap<String, RumbaType>,
+    body: &HashMap<String, RumbaType>,
+    body_continues: bool,
+    orelse: &HashMap<String, RumbaType>,
+    else_continues: bool,
+) -> PyResult<HashMap<String, RumbaType>> {
+    reject_incompatible_common_branch_locals(before, body, orelse)?;
+    match (body_continues, else_continues) {
+        (true, true) => {}
+        (true, false) => return Ok(body.clone()),
+        (false, true) => return Ok(orelse.clone()),
+        (false, false) => return Ok(before.clone()),
+    }
+
+    let mut names = before.keys().cloned().collect::<HashSet<_>>();
+    names.extend(body.keys().cloned());
+    names.extend(orelse.keys().cloned());
+
+    let mut merged = HashMap::new();
+    for name in names {
+        let before_type = before.get(&name).copied();
+        let body_type = body.get(&name).copied();
+        let else_type = orelse.get(&name).copied();
+        match (before_type, body_type, else_type) {
+            (Some(_), Some(body_type), Some(else_type)) if body_type != else_type => {
+                return Err(incompatible_branch_type(&name, body_type, else_type));
+            }
+            (Some(before_type), Some(body_type), None) if body_type != before_type => {
+                return Err(incompatible_branch_type(&name, body_type, before_type));
+            }
+            (Some(before_type), None, Some(else_type)) if else_type != before_type => {
+                return Err(incompatible_branch_type(&name, before_type, else_type));
+            }
+            (Some(_), Some(body_type), Some(_)) => {
+                merged.insert(name, body_type);
+            }
+            (Some(before_type), Some(_), None)
+            | (Some(before_type), None, Some(_))
+            | (Some(before_type), None, None) => {
+                merged.insert(name, before_type);
+            }
+            (None, Some(body_type), Some(else_type)) if body_type == else_type => {
+                merged.insert(name, body_type);
+            }
+            (None, Some(body_type), Some(else_type)) => {
+                return Err(incompatible_branch_type(&name, body_type, else_type));
+            }
+            (None, Some(_), None) | (None, None, Some(_)) | (None, None, None) => {}
+        }
+    }
+    Ok(merged)
+}
+
+fn reject_incompatible_common_branch_locals(
+    before: &HashMap<String, RumbaType>,
+    body: &HashMap<String, RumbaType>,
+    orelse: &HashMap<String, RumbaType>,
+) -> PyResult<()> {
+    for (name, body_type) in body {
+        if before.get(name).is_some() {
+            continue;
+        }
+        if let Some(else_type) = orelse.get(name) {
+            if body_type != else_type {
+                return Err(incompatible_branch_type(name, *body_type, *else_type));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn mark_branch_only_locals(
+    branch_only: &mut HashSet<String>,
+    before: &HashMap<String, RumbaType>,
+    body: &HashMap<String, RumbaType>,
+    orelse: &HashMap<String, RumbaType>,
+) {
+    for name in body.keys().chain(orelse.keys()) {
+        if !before.contains_key(name) && (body.contains_key(name) != orelse.contains_key(name)) {
+            branch_only.insert(name.clone());
+        }
+    }
+}
+
+fn incompatible_branch_type(name: &str, left: RumbaType, right: RumbaType) -> pyo3::PyErr {
+    unsupported(format!(
+        "incompatible branch assignment types for local {name:?}: {} vs {}",
+        left.name(),
+        right.name()
+    ))
+}
+
+fn merge_return_types(left: Option<ScalarType>, right: Option<ScalarType>) -> Option<ScalarType> {
+    match (left, right) {
+        (None, None) => None,
+        (Some(typ), None) | (None, Some(typ)) => Some(typ),
+        (Some(left), Some(right)) if left == right => Some(left),
+        (Some(left), Some(right)) => Some(promote_numeric(left, right, "Return")),
+    }
+}
+
+fn require_int64(expr: &TypedExpr, label: &str) -> PyResult<()> {
+    if expr.typ != RumbaType::Scalar(ScalarType::Int64) {
+        return Err(unsupported(format!("{label} must be an int64 scalar")));
+    }
+    Ok(())
+}
+
+fn stmts_may_continue(stmts: &[StmtNode]) -> bool {
+    for stmt in stmts {
+        if !stmt_may_continue(stmt) {
+            return false;
+        }
+    }
+    true
+}
+
+fn stmt_may_continue(stmt: &StmtNode) -> bool {
+    match stmt {
+        StmtNode::Return(_) => false,
+        StmtNode::If { body, orelse, .. } => {
+            orelse.is_empty() || stmts_may_continue(body) || stmts_may_continue(orelse)
+        }
+        _ => true,
     }
 }
 

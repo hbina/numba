@@ -71,6 +71,13 @@ impl Emitter {
             "{visibility}{} {c_name}({params}) {{",
             self.function.return_type.c_type()
         ));
+        let mut locals = self.function.locals.iter().collect::<Vec<_>>();
+        locals.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (name, typ) in locals {
+            self.declared.insert(name.clone());
+            self.lines
+                .push(format!("{}{} {name};", indent(1), typ.c_type()));
+        }
 
         let body = self.function.body.clone();
         for stmt in &body {
@@ -201,9 +208,9 @@ impl Emitter {
             self.declared.insert(name.to_string());
             "int64_t ".to_string()
         };
-        let cmp = if step.starts_with('-') { ">" } else { "<" };
+        let cmp = format!("(({step}) > 0 ? {name} < {stop} : {name} > {stop})");
         self.lines.push(format!(
-            "{}for ({decl}{name} = {start}; {name} {cmp} {stop}; {name} += {step}) {{",
+            "{}for ({decl}{name} = {start}; {cmp}; {name} += {step}) {{",
             indent(level)
         ));
         for child in body {

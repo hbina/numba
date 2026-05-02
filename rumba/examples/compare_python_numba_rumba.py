@@ -32,8 +32,51 @@ def triangular_i64(n):
     return total
 
 
+def stepped_total_i64(start, stop, step):
+    total = 0
+    for i in range(start, stop, step):
+        total += i
+    return total
+
+
 def weighted_sum_i64(a, b, c):
     return a + b * c
+
+
+def nested_branch_i64(a, b, c):
+    if a > b:
+        if b > c:
+            return a - c
+        return a - b
+    return b - a
+
+
+def classify_i64(a):
+    if a < 0:
+        return -1
+    elif a == 0:
+        return 0
+    else:
+        return 1
+
+
+def combined_control_flow_i64(a, b, c, step):
+    if a > b:
+        start = b
+        stop = a
+    elif a == b:
+        return c
+    else:
+        start = a
+        stop = b
+
+    total = 0
+    for i in range(start, stop, step):
+        if i > c:
+            total += i - c
+        else:
+            total += c - i
+    return total
 
 
 def intrinsic_score_f64(values):
@@ -49,7 +92,11 @@ def intrinsic_score_f64(values):
 rumba_add_i64 = rumba.njit(add_i64)
 rumba_distance_f64 = rumba.njit(distance_f64)
 rumba_triangular_i64 = rumba.njit(triangular_i64)
+rumba_stepped_total_i64 = rumba.njit(stepped_total_i64)
 rumba_weighted_sum_i64 = rumba.njit(weighted_sum_i64)
+rumba_nested_branch_i64 = rumba.njit(nested_branch_i64)
+rumba_classify_i64 = rumba.njit(classify_i64)
+rumba_combined_control_flow_i64 = rumba.njit(combined_control_flow_i64)
 rumba_intrinsic_score_f64 = rumba.njit(intrinsic_score_f64)
 
 
@@ -58,7 +105,10 @@ def combined_functions(a, b, c):
         rumba_add_i64(a, b)
         + rumba_distance_f64(a, b)
         + rumba_triangular_i64(c)
+        + rumba_stepped_total_i64(a, c * 2, 2)
         + rumba_weighted_sum_i64(a, b, c)
+        + rumba_nested_branch_i64(a, b, c)
+        + rumba_classify_i64(c)
     )
 
 
@@ -66,7 +116,11 @@ CASES = (
     ("add_i64", add_i64, (11, 31), True),
     ("distance_f64", distance_f64, (10.5, 2.25), True),
     ("triangular_i64", triangular_i64, (12,), True),
+    ("stepped_total_i64", stepped_total_i64, (2, 12, 3), True),
     ("weighted_sum_i64", weighted_sum_i64, (3, 5, 7), True),
+    ("nested_branch_i64", nested_branch_i64, (9, 5, 2), True),
+    ("classify_i64", classify_i64, (0,), True),
+    ("combined_control_flow_i64", combined_control_flow_i64, (3, 11, 5, 2), True),
     (
         "intrinsic_score_f64",
         intrinsic_score_f64,
@@ -115,9 +169,8 @@ def main():
             f"{name}({', '.join(map(repr, args))}) -> {py_value!r} "
             f"[Rumba signature: ({signature}){numba_note}]"
         )
-        if name == "intrinsic_score_f64":
-            print("\nGenerated C for intrinsic_score_f64:")
-            print(rumba_func.inspect_c())
+        print(f"\nGenerated C for {name}:")
+        print(rumba_func.inspect_c())
 
     print("Python <=> Rumba comparisons passed; Numba compared where supported.")
 

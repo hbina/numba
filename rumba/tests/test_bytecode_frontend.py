@@ -84,6 +84,109 @@ def test_decode_if_else_assignment_with_duplicated_tail_return():
     assert choose_flag(-1) == 2
 
 
+def test_nested_if_inside_if_executes():
+    @rumba.njit
+    def choose(a, b, c):
+        if a > b:
+            if b > c:
+                return a - c
+            return a - b
+        return b - a
+
+    assert choose(9, 5, 2) == 7
+    assert choose(9, 5, 7) == 4
+    assert choose(2, 5, 7) == 3
+
+
+def test_nested_if_inside_else_executes():
+    @rumba.njit
+    def choose(a, b, c):
+        if a > b:
+            return a - b
+        else:
+            if b > c:
+                return b - c
+            return c - b
+
+    assert choose(9, 5, 2) == 4
+    assert choose(2, 5, 3) == 2
+    assert choose(2, 5, 8) == 3
+
+
+def test_if_elif_else_executes_and_normalizes_to_nested_if():
+    @rumba.njit
+    def classify(a):
+        if a < 0:
+            return -1
+        elif a == 0:
+            return 0
+        else:
+            return 1
+
+    assert classify(-3) == -1
+    assert classify(0) == 0
+    assert classify(8) == 1
+
+    typed = classify.inspect_typed_ast()
+    outer = typed["body"][0]
+    assert outer["kind"] == "If"
+    assert outer["orelse"][0]["kind"] == "If"
+
+
+def test_multiple_elif_branches_execute():
+    @rumba.njit
+    def classify(a):
+        if a < 0:
+            return -1
+        elif a == 0:
+            return 0
+        elif a == 1:
+            return 10
+        return 2
+
+    assert classify(-3) == -1
+    assert classify(0) == 0
+    assert classify(1) == 10
+    assert classify(4) == 2
+
+
+def test_branch_assignment_followed_by_shared_return():
+    @rumba.njit
+    def choose_flag(a):
+        if a > 0:
+            value = 1
+        else:
+            value = 2
+        return value + 10
+
+    assert choose_flag(3) == 11
+    assert choose_flag(-1) == 12
+
+
+def test_branch_only_local_use_after_branch_raises():
+    @rumba.njit
+    def choose_flag(a):
+        if a > 0:
+            value = 1
+        return value
+
+    with pytest.raises(RumbaUnsupportedError, match="assigned in only one branch"):
+        choose_flag(3)
+
+
+def test_incompatible_branch_assignment_types_raise():
+    @rumba.njit
+    def choose_flag(a):
+        if a > 0:
+            value = 1
+        else:
+            value = 2.5
+        return value
+
+    with pytest.raises(RumbaUnsupportedError, match="incompatible branch assignment types"):
+        choose_flag(3)
+
+
 def test_decode_range_loop_to_rumba_for_range():
     @rumba.njit
     def total(n):
@@ -95,6 +198,90 @@ def test_decode_range_loop_to_rumba_for_range():
     summary = total.inspect_rumba_ast()
     assert summary["body"] == ["Assign", "For", "Return"]
     assert total(6) == 15
+
+
+def test_range_start_stop_loop_executes():
+    @rumba.njit
+    def total(start, stop):
+        acc = 0
+        for i in range(start, stop):
+            acc += i
+        return acc
+
+    assert total(2, 6) == 14
+
+
+def test_range_start_stop_step_loop_executes():
+    @rumba.njit
+    def total(start, stop, step):
+        acc = 0
+        for i in range(start, stop, step):
+            acc += i
+        return acc
+
+    assert total(2, 10, 3) == 15
+
+
+def test_range_constant_negative_step_loop_executes():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for i in range(n, 0, -2):
+            acc += i
+        return acc
+
+    assert total(7) == 16
+
+
+def test_range_dynamic_positive_and_negative_step_loop_executes():
+    @rumba.njit
+    def total(start, stop, step):
+        acc = 0
+        for i in range(start, stop, step):
+            acc += i
+        return acc
+
+    assert total(1, 8, 2) == 16
+    assert total(8, 1, -3) == 15
+
+    c_source = total.inspect_c()
+    assert "? i < stop : i > stop" in c_source
+
+
+def test_range_rejects_float_stop():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for i in range(n):
+            acc += i
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="range stop must be an int64 scalar"):
+        total(4.5)
+
+
+def test_range_rejects_float_step():
+    @rumba.njit
+    def total(step):
+        acc = 0
+        for i in range(0, 5, step):
+            acc += i
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="range step must be an int64 scalar"):
+        total(1.5)
+
+
+def test_range_rejects_constant_zero_step():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for i in range(0, n, 0):
+            acc += i
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="range step cannot be zero"):
+        total(5)
 
 
 def test_decode_global_function_calls():

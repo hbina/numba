@@ -414,6 +414,33 @@ impl<'a> BytecodeParser<'a> {
                             index = after_index;
                             continue;
                         }
+                        if let Some(jump_index) =
+                            self.trailing_backward_jump(body_start, target_index)?
+                        {
+                            let after =
+                                self.jump_target(&self.code.instructions[jump_index], false)?;
+                            let Some(else_jump_index) = self.matching_backward_jump(
+                                target_index,
+                                (end + 1).min(self.code.instructions.len()),
+                                after,
+                            )?
+                            else {
+                                return Err(unsupported("unsupported if/else loop control flow"));
+                            };
+                            let (body, body_end) = self.parse_block(body_start, jump_index)?;
+                            let (orelse, else_end) =
+                                self.parse_block(target_index, else_jump_index)?;
+                            if body_end != jump_index || else_end != else_jump_index {
+                                return Err(unsupported("unsupported if/else loop control flow"));
+                            }
+                            statements.push(StmtNode::If {
+                                test: maybe_invert_test(test, inst.opcode),
+                                body,
+                                orelse,
+                            });
+                            index = else_jump_index;
+                            continue;
+                        }
                     }
                     let (body, body_end) = self.parse_block(body_start, target_index)?;
                     if body_end != target_index {
@@ -515,6 +542,7 @@ impl<'a> BytecodeParser<'a> {
     }
 
     fn find_loop_jump(&self, start: usize, target: usize) -> PyResult<usize> {
+        let mut loop_jump = None;
         for index in start..self.code.instructions.len() {
             let inst = &self.code.instructions[index];
             if inst.offset >= target {
@@ -523,10 +551,10 @@ impl<'a> BytecodeParser<'a> {
             if inst.opcode == Opcode::JumpBackward
                 && self.jump_target(inst, false)? <= self.code.instructions[start - 1].offset
             {
-                return Ok(index);
+                loop_jump = Some(index);
             }
         }
-        Err(unsupported("unsupported range loop control flow"))
+        loop_jump.ok_or_else(|| unsupported("unsupported range loop control flow"))
     }
 
     fn trailing_forward_jump(&self, start: usize, end: usize) -> PyResult<Option<usize>> {
@@ -539,6 +567,33 @@ impl<'a> BytecodeParser<'a> {
         } else {
             Ok(None)
         }
+    }
+
+    fn trailing_backward_jump(&self, start: usize, end: usize) -> PyResult<Option<usize>> {
+        if start >= end {
+            return Ok(None);
+        }
+        let jump_index = end - 1;
+        if self.code.instructions[jump_index].opcode == Opcode::JumpBackward {
+            Ok(Some(jump_index))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn matching_backward_jump(
+        &self,
+        start: usize,
+        end: usize,
+        target: usize,
+    ) -> PyResult<Option<usize>> {
+        for index in start..end {
+            let inst = &self.code.instructions[index];
+            if inst.opcode == Opcode::JumpBackward && self.jump_target(inst, false)? == target {
+                return Ok(Some(index));
+            }
+        }
+        Ok(None)
     }
 
     fn resolve_global_call(&self, name: &str) -> PyResult<CallTarget> {

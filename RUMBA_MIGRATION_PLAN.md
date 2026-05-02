@@ -79,6 +79,9 @@ Current known gap in the chosen Python syntax subset:
   decorated with `@rumba.njit`. Plain Python helpers, local nested helpers,
   closures, recursive helpers, and runtime dispatcher calls from generated C
   remain unsupported.
+- The generated native wrapper ABI is implemented for the current scalar and
+  1D array view signatures. Future ABI work should extend this wrapper model
+  instead of adding per-signature Rust invocation arms.
 
 ## Non-Negotiable Direction
 
@@ -131,10 +134,10 @@ explicitly added to this table.
 
 | Feature | Target | Current status | Notes |
 | ------- | ------ | -------------- | ----- |
-| `if` / `else` branches | Supported | Partial | Simple branches are supported. Broaden bytecode/control-flow handling and tests for nested branches and branch-local assignments. |
-| `elif` | Supported | Not complete | Treat as nested `else: if ...` in the AST/control-flow frontend and verify generated C preserves Python semantics. |
+| `if` / `else` branches | Supported | Implemented for current slice | Nested branches and branch merge diagnostics are covered for the supported bytecode shapes. |
+| `elif` | Supported | Implemented for current slice | Normalized as nested `else: if ...` in the AST/control-flow frontend. |
 | `for` loops | Supported for `range(...)` only | Partial | Keep support focused on `for i in range(...)`; iteration over lists, tuples, arrays, generators, and arbitrary objects remains unsupported. |
-| `range(start/stop/step)` | Supported | Partial | Support one-, two-, and three-argument integer ranges, including negative constant steps where practical. Reject non-integer range bounds. |
+| `range(start/stop/step)` | Supported | Implemented for current slice | Supports one-, two-, and three-argument integer ranges, including dynamic positive and negative steps. Reject non-integer range bounds and constant zero step. |
 | `while` loops | Supported | Not started | Add bytecode control-flow recognition, AST node, type checking for boolean conditions, C lowering, and tests. |
 | `break` / `continue` | Supported inside supported loops | Not started | Add structured loop exits in the AST/lowering. Reject use outside loops and unsupported nested-control-flow cases clearly. |
 | Local assignment | Supported | Implemented | Continue to require statically typed local variables in the Rust typing pass. |
@@ -206,7 +209,7 @@ Required capabilities:
 
 ### Milestone 5: Rust Dispatcher And Runtime Invocation
 
-Status: Partial.
+Status: Implemented for current scalar and 1D array ABI slice.
 
 Implement the dispatcher as a PyO3 class.
 
@@ -220,15 +223,16 @@ Required capabilities:
   used, signature, Python version, Rumba version, target platform, and compiler
   flags. Partial.
 - Invoke compiled functions from Rust instead of Python `ctypes`. Implemented
-  for the current scalar and 1D array ABI combinations.
+  through the generated native wrapper ABI for the current scalar and 1D array
+  ABI combinations.
 - Preserve inspection helpers for bytecode, Rumba AST, generated C, compiler
   command, and cache path. Implemented except typed AST.
 
-Runtime invocation should move toward a single generated native wrapper ABI
-instead of enumerating every scalar/array signature in Rust. Rust/PyO3 remains
-responsible for strict argument validation and for preparing all wrapper storage
-before the native call. The generated wrapper may reinterpret those already
-validated values for the compiled signature, but it must not allocate.
+Runtime invocation now uses a generated native wrapper ABI for the current
+signature slice. Rust/PyO3 remains responsible for strict argument validation
+and for preparing all wrapper storage before the native call. The generated
+wrapper may reinterpret those already validated values for the compiled
+signature, but it must not allocate.
 
 ### Milestone 6: Rust Type Inference And Diagnostics
 
@@ -269,7 +273,7 @@ Remaining work:
 
 ### Milestone 8: Focused Python Syntax Growth
 
-Status: Partial.
+Status: Active next step.
 
 Grow only the selected Python syntax subset, with Rust implementation and tests
 for each feature. This milestone replaces any broad Numba parity goal.
