@@ -110,6 +110,12 @@ fn stmt_to_py(py: Python<'_>, stmt: &TypedStmt) -> PyResult<PyObject> {
             out.set_item("body", stmts_to_py(py, body)?)?;
             out.set_item("orelse", stmts_to_py(py, orelse)?)?;
         }
+        TypedStmt::While { test, body } => {
+            out.set_item("kind", "While")?;
+            out.set_item("test_type", test.typ.name())?;
+            out.set_item("test", expr_to_py(py, test)?)?;
+            out.set_item("body", stmts_to_py(py, body)?)?;
+        }
         TypedStmt::ForRange {
             target,
             start,

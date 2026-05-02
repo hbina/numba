@@ -154,6 +154,7 @@ fn has_store_index(body: &[StmtNode]) -> bool {
     body.iter().any(|stmt| match stmt {
         StmtNode::StoreIndex { .. } | StmtNode::StoreIndexField { .. } => true,
         StmtNode::If { body, orelse, .. } => has_store_index(body) || has_store_index(orelse),
+        StmtNode::While { body, .. } => has_store_index(body),
         StmtNode::ForRange { body, .. } => has_store_index(body),
         StmtNode::Return(_) | StmtNode::Assign { .. } | StmtNode::AugAssign { .. } => false,
     })

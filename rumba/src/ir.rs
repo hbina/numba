@@ -36,6 +36,10 @@ pub(crate) enum StmtNode {
         body: Vec<StmtNode>,
         orelse: Vec<StmtNode>,
     },
+    While {
+        test: ExprNode,
+        body: Vec<StmtNode>,
+    },
     ForRange {
         target: String,
         start: ExprNode,
@@ -54,6 +58,7 @@ impl StmtNode {
             Self::StoreIndex { .. } => "StoreIndex",
             Self::StoreIndexField { .. } => "StoreIndexField",
             Self::If { .. } => "If",
+            Self::While { .. } => "While",
             Self::ForRange { .. } => "For",
         }
     }

@@ -32,6 +32,14 @@ def triangular_i64(n):
     return total
 
 
+def while_countdown_i64(n):
+    total = 0
+    while n > 0:
+        total += n
+        n -= 1
+    return total
+
+
 def stepped_total_i64(start, stop, step):
     total = 0
     for i in range(start, stop, step):
@@ -108,9 +116,28 @@ def structured_update_weight(records, replacement):
     return records[1]["weight"]
 
 
+def while_mutate_array(values, n):
+    i = 0
+    while i < n:
+        values[i] = i + 10
+        i += 1
+    return values[n - 1]
+
+
+def while_structured_update(records, n):
+    i = 0
+    total = 0.0
+    while i < n:
+        records[i]["weight"] = records[i]["count"] * 2.0
+        total += records[i]["weight"]
+        i += 1
+    return total
+
+
 rumba_add_i64 = rumba.njit(add_i64)
 rumba_distance_f64 = rumba.njit(distance_f64)
 rumba_triangular_i64 = rumba.njit(triangular_i64)
+rumba_while_countdown_i64 = rumba.njit(while_countdown_i64)
 rumba_stepped_total_i64 = rumba.njit(stepped_total_i64)
 rumba_weighted_sum_i64 = rumba.njit(weighted_sum_i64)
 rumba_nested_branch_i64 = rumba.njit(nested_branch_i64)
@@ -120,6 +147,8 @@ rumba_intrinsic_score_f64 = rumba.njit(intrinsic_score_f64)
 rumba_structured_field_sum = rumba.njit(structured_field_sum)
 rumba_structured_weighted_score = rumba.njit(structured_weighted_score)
 rumba_structured_update_weight = rumba.njit(structured_update_weight)
+rumba_while_mutate_array = rumba.njit(while_mutate_array)
+rumba_while_structured_update = rumba.njit(while_structured_update)
 
 
 def combined_functions(a, b, c):
@@ -138,6 +167,7 @@ CASES = (
     ("add_i64", add_i64, (11, 31), True),
     ("distance_f64", distance_f64, (10.5, 2.25), True),
     ("triangular_i64", triangular_i64, (12,), True),
+    ("while_countdown_i64", while_countdown_i64, (12,), True),
     ("stepped_total_i64", stepped_total_i64, (2, 12, 3), True),
     ("weighted_sum_i64", weighted_sum_i64, (3, 5, 7), True),
     ("nested_branch_i64", nested_branch_i64, (9, 5, 2), True),
@@ -181,6 +211,24 @@ CASES = (
                 dtype=np.dtype([("count", np.uint64), ("weight", np.float64)]),
             ),
             9.5,
+        ),
+        True,
+    ),
+    (
+        "while_mutate_array",
+        while_mutate_array,
+        (np.zeros(5, dtype=np.int64), 3),
+        True,
+    ),
+    (
+        "while_structured_update",
+        while_structured_update,
+        (
+            np.array(
+                [(1, 0.0), (2, 0.0), (3, 0.0)],
+                dtype=np.dtype([("count", np.uint64), ("weight", np.float64)]),
+            ),
+            3,
         ),
         True,
     ),

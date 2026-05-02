@@ -429,6 +429,23 @@ impl<'a> BytecodeParser<'a> {
                     let target = self.jump_target(inst, true)?;
                     let target_index = self.index_at(target)?;
                     let body_start = index + 1;
+                    if let Some((body_end, jump_index)) =
+                        self.trailing_while_jump(index, body_start, target_index)?
+                    {
+                        let (body, consumed) = self.parse_block(body_start, body_end)?;
+                        if consumed != body_end {
+                            return Err(unsupported("unsupported while loop control flow"));
+                        }
+                        statements.push(StmtNode::While {
+                            test: maybe_invert_test(test, inst.opcode),
+                            body,
+                        });
+                        index = target_index;
+                        if jump_index + 1 != target_index {
+                            return Err(unsupported("unsupported while loop control flow"));
+                        }
+                        continue;
+                    }
                     if target_index > start {
                         if let Some(jump_index) =
                             self.trailing_forward_jump(body_start, target_index)?
@@ -631,6 +648,56 @@ impl<'a> BytecodeParser<'a> {
         Ok(None)
     }
 
+    fn trailing_while_jump(
+        &self,
+        test_jump_index: usize,
+        body_start: usize,
+        target_index: usize,
+    ) -> PyResult<Option<(usize, usize)>> {
+        if body_start >= target_index || target_index < 2 {
+            return Ok(None);
+        }
+        let jump_index = target_index - 1;
+        let jump = &self.code.instructions[jump_index];
+        if jump.opcode != Opcode::JumpBackward
+            || self.jump_target(jump, false)? != self.code.instructions[body_start].offset
+        {
+            return Ok(None);
+        }
+        let condition_jump_index = target_index - 2;
+        let condition_jump = &self.code.instructions[condition_jump_index];
+        if !matches!(
+            condition_jump.opcode,
+            Opcode::PopJumpIfFalse | Opcode::PopJumpIfTrue
+        ) || self.jump_target(condition_jump, true)?
+            != self.code.instructions[target_index].offset
+        {
+            return Err(unsupported("unsupported while loop control flow"));
+        }
+        let Some(condition_line) = self.condition_line(test_jump_index) else {
+            return Err(unsupported("unsupported while loop control flow"));
+        };
+        let Some(condition_start) =
+            self.last_line_start(body_start, condition_jump_index, condition_line)
+        else {
+            return Err(unsupported("unsupported while loop control flow"));
+        };
+        Ok(Some((condition_start, jump_index)))
+    }
+
+    fn condition_line(&self, jump_index: usize) -> Option<usize> {
+        self.code.instructions[..=jump_index]
+            .iter()
+            .rev()
+            .find_map(|inst| inst.starts_line)
+    }
+
+    fn last_line_start(&self, start: usize, end: usize, line: usize) -> Option<usize> {
+        (start..end)
+            .rev()
+            .find(|index| self.code.instructions[*index].starts_line == Some(line))
+    }
+
     fn resolve_global_call(&self, name: &str) -> PyResult<CallTarget> {
         let Some(value) = self.globals.get_item(name)? else {
             if let Some(intrinsic) = IntrinsicId::from_builtin(name) {
@@ -675,6 +742,8 @@ impl<'a> BytecodeParser<'a> {
 }
 
 fn reject_unsupported_function_shape(func: &Bound<'_, PyAny>) -> PyResult<()> {
+    reject_unsupported_source_control_flow(func)?;
+
     let code = func.getattr("__code__")?;
     let freevars = code.getattr("co_freevars")?.downcast_into::<PyTuple>()?;
     if !freevars.is_empty() {
@@ -703,6 +772,34 @@ fn reject_unsupported_function_shape(func: &Bound<'_, PyAny>) -> PyResult<()> {
         .downcast_into::<PyBytes>()?;
     if !exception_table.as_bytes().is_empty() {
         return Err(unsupported("exception handling is not supported"));
+    }
+    Ok(())
+}
+
+fn reject_unsupported_source_control_flow(func: &Bound<'_, PyAny>) -> PyResult<()> {
+    let py = func.py();
+    let inspect = py.import_bound("inspect")?;
+    let textwrap = py.import_bound("textwrap")?;
+    let ast = py.import_bound("ast")?;
+    let Ok(source) = inspect.call_method1("getsource", (func,)) else {
+        return Ok(());
+    };
+    let source = textwrap.call_method1("dedent", (source,))?;
+    let tree = ast.call_method1("parse", (source,))?;
+    let nodes = ast.call_method1("walk", (tree,))?;
+    for node in nodes.iter()? {
+        let node = node?;
+        let class_name = node.get_type().name()?.to_string();
+        match class_name.as_str() {
+            "Break" => return Err(unsupported("break is not supported")),
+            "Continue" => return Err(unsupported("continue is not supported")),
+            "While" => {
+                if !node.getattr("orelse")?.is_empty()? {
+                    return Err(unsupported("while else is not supported"));
+                }
+            }
+            _ => {}
+        }
     }
     Ok(())
 }

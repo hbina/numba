@@ -52,6 +52,10 @@ pub(crate) enum TypedStmt {
         body: Vec<TypedStmt>,
         orelse: Vec<TypedStmt>,
     },
+    While {
+        test: TypedExpr,
+        body: Vec<TypedStmt>,
+    },
     ForRange {
         target: String,
         start: TypedExpr,
@@ -331,6 +335,17 @@ impl TypePass {
                     body: typed_body,
                     orelse: typed_orelse,
                 })
+            }
+            StmtNode::While { test, body } => {
+                let test = self.expr(test)?;
+                if test.typ != RumbaType::Scalar(ScalarType::Bool) {
+                    return Err(unsupported("while condition must be boolean"));
+                }
+                let body = body
+                    .iter()
+                    .map(|stmt| self.stmt(stmt))
+                    .collect::<PyResult<Vec<_>>>()?;
+                Ok(TypedStmt::While { test, body })
             }
             StmtNode::ForRange {
                 target,
@@ -698,6 +713,7 @@ fn stmt_may_continue(stmt: &StmtNode) -> bool {
         StmtNode::If { body, orelse, .. } => {
             orelse.is_empty() || stmts_may_continue(body) || stmts_may_continue(orelse)
         }
+        StmtNode::While { .. } => true,
         _ => true,
     }
 }

@@ -248,6 +248,135 @@ def test_range_dynamic_positive_and_negative_step_loop_executes():
     assert "? i < stop : i > stop" in c_source
 
 
+def test_decode_while_loop_to_rumba_while():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        while n > 0:
+            acc += n
+            n -= 1
+        return acc
+
+    summary = total.inspect_rumba_ast()
+    assert summary["body"] == ["Assign", "While", "Return"]
+    assert total(5) == 15
+    assert "while (" in total.inspect_c()
+
+
+def test_float_accumulator_while_loop_executes():
+    @rumba.njit
+    def total(n):
+        acc = 0.5
+        while n > 0:
+            acc += 1.25
+            n -= 1
+        return acc
+
+    assert total(4) == pytest.approx(5.5)
+
+
+def test_while_with_nested_if_executes():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        while n > 0:
+            if n > 2:
+                acc += n
+            else:
+                acc += 1
+            n -= 1
+        return acc
+
+    assert total(4) == 9
+
+
+def test_while_with_nested_for_range_executes():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        while n > 0:
+            for i in range(n):
+                acc += i
+            n -= 1
+        return acc
+
+    assert total(4) == 10
+
+
+def test_while_with_early_return_executes():
+    @rumba.njit
+    def find_total(n):
+        acc = 0
+        while n > 0:
+            if n == 2:
+                return acc
+            acc += n
+            n -= 1
+        return acc
+
+    assert find_total(5) == 12
+    assert find_total(1) == 1
+
+
+def test_while_condition_must_be_bool():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        while n:
+            acc += n
+            n -= 1
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="while condition must be boolean"):
+        total(3)
+
+
+def test_break_inside_while_remains_unsupported():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        while n > 0:
+            break
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="break is not supported"):
+        total(3)
+
+
+def test_continue_inside_while_remains_unsupported():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        while n > 0:
+            n -= 1
+            if n == 2:
+                continue
+            acc += n
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="continue is not supported"):
+        total(4)
+
+
+def test_source_unavailable_continue_bytecode_shape_is_rejected():
+    namespace = {}
+    exec(
+        "def generated(n):\n"
+        "    acc = 0\n"
+        "    while n > 0:\n"
+        "        n -= 1\n"
+        "        if n == 2:\n"
+        "            continue\n"
+        "        acc += n\n"
+        "    return acc\n",
+        namespace,
+    )
+    generated = rumba.njit(namespace["generated"])
+
+    with pytest.raises(RumbaUnsupportedError, match="unsupported .* control flow"):
+        generated(4)
+
+
 def test_range_rejects_float_stop():
     @rumba.njit
     def total(n):

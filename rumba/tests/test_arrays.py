@@ -61,6 +61,21 @@ def test_mutate_float64_array_in_place():
     assert values.tolist() == [1.0, 2.0, 9.5]
 
 
+def test_while_mutates_int64_array_in_place():
+    @rumba.njit
+    def fill_prefix(a, n):
+        i = 0
+        while i < n:
+            a[i] = i + 10
+            i += 1
+        return a[n - 1]
+
+    values = np.zeros(5, dtype=np.int64)
+
+    assert fill_prefix(values, 3) == 12
+    assert values.tolist() == [10, 11, 12, 0, 0]
+
+
 @pytest.mark.parametrize(
     ("values", "offset", "expected"),
     [
@@ -475,6 +490,26 @@ def test_structured_array_inspect_c_and_typed_ast():
     assert store["value"]["kind"] == "IndexField"
     assert ret["value"]["kind"] == "IndexField"
     assert ret["value"]["field"] == "value"
+
+
+def test_while_reads_and_writes_structured_array_fields():
+    @rumba.njit
+    def scale_counts(a, n):
+        i = 0
+        total = 0.0
+        while i < n:
+            a[i]["weight"] = a[i]["count"] * 2.0
+            total += a[i]["weight"]
+            i += 1
+        return total
+
+    values = np.array(
+        [(1, 0.0), (2, 0.0), (3, 0.0)],
+        dtype=np.dtype([("count", np.uint64), ("weight", np.float64)]),
+    )
+
+    assert scale_counts(values, 3) == pytest.approx(12.0)
+    assert values["weight"].tolist() == pytest.approx([2.0, 4.0, 6.0])
 
 
 def test_structured_array_bare_record_read_is_unsupported():

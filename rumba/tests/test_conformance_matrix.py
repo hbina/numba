@@ -47,6 +47,8 @@ EXPECTED_RUMBA_FAILURES = frozenset(
         "generated_binary_mul_bool_float64",
         "generated_branch_distance_bool_float64",
         "generated_binary_add_bool_bool",
+        "generated_while_break_int64",
+        "generated_while_continue_int64",
     }
 )
 
@@ -177,6 +179,52 @@ def generate_scalar_cases() -> list[Case]:
                     "return a1 - a0",
                 )
             )
+
+    cases.append(
+        _make_case(
+            "generated_while_countdown_int64",
+            lambda: (7,),
+            "total = 0\n"
+            "while a0 > 0:\n"
+            "    total += a0\n"
+            "    a0 -= 1\n"
+            "return total",
+        )
+    )
+    cases.append(
+        _make_case(
+            "generated_while_float_accumulator_int64",
+            lambda: (4,),
+            "total = 0.5\n"
+            "while a0 > 0:\n"
+            "    total += 1.25\n"
+            "    a0 -= 1\n"
+            "return total",
+        )
+    )
+    cases.append(
+        _make_case(
+            "generated_while_break_int64",
+            lambda: (4,),
+            "total = 0\n"
+            "while a0 > 0:\n"
+            "    break\n"
+            "return total",
+        )
+    )
+    cases.append(
+        _make_case(
+            "generated_while_continue_int64",
+            lambda: (4,),
+            "total = 0\n"
+            "while a0 > 0:\n"
+            "    a0 -= 1\n"
+            "    if a0 == 2:\n"
+            "        continue\n"
+            "    total += a0\n"
+            "return total",
+        )
+    )
 
     return cases
 

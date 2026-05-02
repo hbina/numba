@@ -345,6 +345,25 @@ def test_inspect_typed_ast_records_if_test_bool_and_loop_index():
     assert branch["test"]["reason"] == "environment"
 
 
+def test_inspect_typed_ast_records_while_test_and_body():
+    @rumba.njit
+    def countdown(n):
+        acc = 0
+        while n > 0:
+            acc += n
+            n -= 1
+        return acc
+
+    assert countdown(4) == 10
+    typed = countdown.inspect_typed_ast()
+
+    loop = typed["body"][1]
+    assert loop["kind"] == "While"
+    assert loop["test_type"] == "bool"
+    assert loop["test"]["kind"] == "Compare"
+    assert [stmt["kind"] for stmt in loop["body"]] == ["AugAssign", "AugAssign"]
+
+
 def test_inspect_typed_ast_exposes_helper_return_type():
     @rumba.njit
     def use_helper(a):

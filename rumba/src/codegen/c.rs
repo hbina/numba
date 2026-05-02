@@ -214,6 +214,15 @@ impl Emitter {
                 self.declared.extend(else_declared);
                 self.lines.push(format!("{}}}", indent(level)));
             }
+            TypedStmt::While { test, body } => {
+                let test = self.expr(test)?;
+                self.lines
+                    .push(format!("{}while ({}) {{", indent(level), test.code));
+                for child in body {
+                    self.stmt(child, level + 1)?;
+                }
+                self.lines.push(format!("{}}}", indent(level)));
+            }
             TypedStmt::ForRange {
                 target,
                 start,
@@ -526,6 +535,12 @@ fn collect_struct_dtypes_from_stmt(stmt: &TypedStmt, out: &mut Vec<StructDtype>)
         TypedStmt::If { test, body, orelse } => {
             collect_struct_dtypes_from_expr(test, out);
             for stmt in body.iter().chain(orelse.iter()) {
+                collect_struct_dtypes_from_stmt(stmt, out);
+            }
+        }
+        TypedStmt::While { test, body } => {
+            collect_struct_dtypes_from_expr(test, out);
+            for stmt in body {
                 collect_struct_dtypes_from_stmt(stmt, out);
             }
         }
