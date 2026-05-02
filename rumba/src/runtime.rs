@@ -4,6 +4,7 @@ use pyo3::types::PyTuple;
 use crate::artifact::CompiledArtifact;
 use crate::errors::{compilation, unsupported};
 use crate::types::{RumbaType, ScalarType};
+use std::ffi::c_void;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -28,15 +29,6 @@ enum NativeArg {
     ArrayF64(ArrayF64View),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AbiKind {
-    I64,
-    F64,
-    Bool,
-    ArrayI64,
-    ArrayF64,
-}
-
 pub(crate) fn call_native(
     py: Python<'_>,
     artifact: &CompiledArtifact,
@@ -49,11 +41,6 @@ pub(crate) fn call_native(
         .zip(args.iter())
         .map(|(typ, arg)| prepare_arg(typ, &arg, artifact.requires_writable_arrays))
         .collect::<PyResult<Vec<_>>>()?;
-    let kinds = artifact
-        .signature
-        .iter()
-        .map(abi_kind)
-        .collect::<PyResult<Vec<_>>>()?;
     if debug {
         eprintln!(
             "[rumba-debug] runtime: artifact signature: [{}]",
@@ -63,7 +50,6 @@ pub(crate) fn call_native(
             "[rumba-debug] runtime: return type: {}",
             artifact.return_type.name()
         );
-        eprintln!("[rumba-debug] runtime: ABI kinds: {kinds:?}");
         eprintln!("[rumba-debug] runtime: prepared args: {prepared:?}");
         eprintln!(
             "[rumba-debug] runtime: library path: {}",
@@ -72,306 +58,63 @@ pub(crate) fn call_native(
     }
 
     unsafe {
+        let mut call = PreparedCall::new(prepared);
+        if debug {
+            eprintln!(
+                "[rumba-debug] runtime: native wrapper argument count: {}",
+                call.args.len()
+            );
+        }
+        let f: libloading::Symbol<unsafe extern "C" fn(*mut *mut c_void, *mut c_void)> =
+            artifact.library.get(b"rumba_call").map_err(load_error)?;
         match artifact.return_type {
             ScalarType::Int64 => {
-                call_i64(artifact, &kinds, &prepared, debug).map(|value| value.into_py(py))
+                let mut ret = 0_i64;
+                f(
+                    call.arg_ptrs.as_mut_ptr(),
+                    (&mut ret as *mut i64).cast::<c_void>(),
+                );
+                Ok(ret.into_py(py))
             }
             ScalarType::Float64 => {
-                call_f64(artifact, &kinds, &prepared, debug).map(|value| value.into_py(py))
+                let mut ret = 0.0_f64;
+                f(
+                    call.arg_ptrs.as_mut_ptr(),
+                    (&mut ret as *mut f64).cast::<c_void>(),
+                );
+                Ok(ret.into_py(py))
             }
             ScalarType::Bool => {
-                call_bool(artifact, &kinds, &prepared, debug).map(|value| value.into_py(py))
+                let mut ret = false;
+                f(
+                    call.arg_ptrs.as_mut_ptr(),
+                    (&mut ret as *mut bool).cast::<c_void>(),
+                );
+                Ok(ret.into_py(py))
             }
         }
     }
 }
 
-unsafe fn call_i64(
-    artifact: &CompiledArtifact,
-    kinds: &[AbiKind],
-    args: &[NativeArg],
-    debug: bool,
-) -> PyResult<i64> {
-    match kinds {
-        [AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0)))
-        }
-        [AbiKind::Bool] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(bool) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_bool(args, 0)))
-        }
-        [AbiKind::ArrayI64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_i64(args, 0)))
-        }
-        [AbiKind::ArrayF64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_f64(args, 0)))
-        }
-        [AbiKind::I64, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, i64) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::I64, AbiKind::Bool] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, bool) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_bool(args, 1)))
-        }
-        [AbiKind::Bool, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(bool, i64) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_bool(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::Bool, AbiKind::Bool] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(bool, bool) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_bool(args, 0), arg_bool(args, 1)))
-        }
-        [AbiKind::ArrayI64, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, i64) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_i64(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::ArrayI64, AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, f64) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_i64(args, 0), arg_f64(args, 1)))
-        }
-        [AbiKind::I64, AbiKind::ArrayI64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, ArrayI64View) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_array_i64(args, 1)))
-        }
-        [AbiKind::F64, AbiKind::ArrayI64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64, ArrayI64View) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0), arg_array_i64(args, 1)))
-        }
-        [AbiKind::ArrayI64, AbiKind::ArrayI64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, ArrayI64View) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_i64(args, 0), arg_array_i64(args, 1)))
-        }
-        [AbiKind::ArrayI64, AbiKind::ArrayF64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, ArrayF64View) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_i64(args, 0), arg_array_f64(args, 1)))
-        }
-        [AbiKind::ArrayF64, AbiKind::ArrayI64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, ArrayI64View) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_f64(args, 0), arg_array_i64(args, 1)))
-        }
-        [AbiKind::ArrayF64, AbiKind::ArrayF64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, ArrayF64View) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_f64(args, 0), arg_array_f64(args, 1)))
-        }
-        [AbiKind::I64, AbiKind::I64, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, i64, i64) -> i64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_i64(args, 1), arg_i64(args, 2)))
-        }
-        _ => unsupported_native_signature("int64", kinds, debug),
-    }
+struct PreparedCall {
+    args: Vec<NativeArg>,
+    arg_ptrs: Vec<*mut c_void>,
 }
 
-unsafe fn call_f64(
-    artifact: &CompiledArtifact,
-    kinds: &[AbiKind],
-    args: &[NativeArg],
-    debug: bool,
-) -> PyResult<f64> {
-    match kinds {
-        [AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0)))
-        }
-        [AbiKind::ArrayF64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_f64(args, 0)))
-        }
-        [AbiKind::F64, AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64, f64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0), arg_f64(args, 1)))
-        }
-        [AbiKind::I64, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, i64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::I64, AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, f64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_f64(args, 1)))
-        }
-        [AbiKind::F64, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64, i64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::ArrayF64, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, i64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_f64(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::ArrayF64, AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, f64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_f64(args, 0), arg_f64(args, 1)))
-        }
-        [AbiKind::F64, AbiKind::ArrayF64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64, ArrayF64View) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0), arg_array_f64(args, 1)))
-        }
-        [AbiKind::ArrayI64, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, i64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_i64(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::ArrayI64, AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, f64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_i64(args, 0), arg_f64(args, 1)))
-        }
-        [AbiKind::I64, AbiKind::ArrayI64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, ArrayI64View) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_array_i64(args, 1)))
-        }
-        [AbiKind::I64, AbiKind::ArrayF64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, ArrayF64View) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_array_f64(args, 1)))
-        }
-        [AbiKind::F64, AbiKind::ArrayI64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64, ArrayI64View) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0), arg_array_i64(args, 1)))
-        }
-        [AbiKind::ArrayI64, AbiKind::ArrayI64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, ArrayI64View) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_i64(args, 0), arg_array_i64(args, 1)))
-        }
-        [AbiKind::ArrayI64, AbiKind::ArrayF64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayI64View, ArrayF64View) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_i64(args, 0), arg_array_f64(args, 1)))
-        }
-        [AbiKind::ArrayF64, AbiKind::ArrayI64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, ArrayI64View) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_f64(args, 0), arg_array_i64(args, 1)))
-        }
-        [AbiKind::ArrayF64, AbiKind::ArrayF64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(ArrayF64View, ArrayF64View) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_array_f64(args, 0), arg_array_f64(args, 1)))
-        }
-        [AbiKind::F64, AbiKind::F64, AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64, f64, f64) -> f64> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0), arg_f64(args, 1), arg_f64(args, 2)))
-        }
-        _ => unsupported_native_signature("float64", kinds, debug),
+impl PreparedCall {
+    fn new(mut args: Vec<NativeArg>) -> Self {
+        let arg_ptrs = args
+            .iter_mut()
+            .map(|arg| match arg {
+                NativeArg::I64(value) => (value as *mut i64).cast::<c_void>(),
+                NativeArg::F64(value) => (value as *mut f64).cast::<c_void>(),
+                NativeArg::Bool(value) => (value as *mut bool).cast::<c_void>(),
+                NativeArg::ArrayI64(value) => (value as *mut ArrayI64View).cast::<c_void>(),
+                NativeArg::ArrayF64(value) => (value as *mut ArrayF64View).cast::<c_void>(),
+            })
+            .collect();
+        Self { args, arg_ptrs }
     }
-}
-
-unsafe fn call_bool(
-    artifact: &CompiledArtifact,
-    kinds: &[AbiKind],
-    args: &[NativeArg],
-    debug: bool,
-) -> PyResult<bool> {
-    match kinds {
-        [AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0)))
-        }
-        [AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0)))
-        }
-        [AbiKind::Bool] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(bool) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_bool(args, 0)))
-        }
-        [AbiKind::I64, AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, f64) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_f64(args, 1)))
-        }
-        [AbiKind::I64, AbiKind::Bool] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, bool) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_bool(args, 1)))
-        }
-        [AbiKind::I64, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(i64, i64) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_i64(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::F64, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64, i64) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::F64, AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64, f64) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0), arg_f64(args, 1)))
-        }
-        [AbiKind::F64, AbiKind::Bool] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(f64, bool) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_f64(args, 0), arg_bool(args, 1)))
-        }
-        [AbiKind::Bool, AbiKind::I64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(bool, i64) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_bool(args, 0), arg_i64(args, 1)))
-        }
-        [AbiKind::Bool, AbiKind::F64] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(bool, f64) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_bool(args, 0), arg_f64(args, 1)))
-        }
-        [AbiKind::Bool, AbiKind::Bool] => {
-            let f: libloading::Symbol<unsafe extern "C" fn(bool, bool) -> bool> =
-                artifact.library.get(b"rumba_entry").map_err(load_error)?;
-            Ok(f(arg_bool(args, 0), arg_bool(args, 1)))
-        }
-        _ => unsupported_native_signature("bool", kinds, debug),
-    }
-}
-
-fn unsupported_native_signature<T>(
-    return_type: &str,
-    kinds: &[AbiKind],
-    debug: bool,
-) -> PyResult<T> {
-    if debug {
-        eprintln!(
-            "[rumba-debug] runtime: unsupported native ABI dispatch: return_type={return_type}, ABI kinds={kinds:?}"
-        );
-    }
-    Err(unsupported(
-        "native invocation does not support this signature",
-    ))
 }
 
 fn prepare_arg(
@@ -397,17 +140,6 @@ fn prepare_arg(
                 len,
             }))
         }
-        RumbaType::Array1D(ScalarType::Bool) => Err(unsupported("bool arrays are not supported")),
-    }
-}
-
-fn abi_kind(typ: &RumbaType) -> PyResult<AbiKind> {
-    match typ {
-        RumbaType::Scalar(ScalarType::Int64) => Ok(AbiKind::I64),
-        RumbaType::Scalar(ScalarType::Float64) => Ok(AbiKind::F64),
-        RumbaType::Scalar(ScalarType::Bool) => Ok(AbiKind::Bool),
-        RumbaType::Array1D(ScalarType::Int64) => Ok(AbiKind::ArrayI64),
-        RumbaType::Array1D(ScalarType::Float64) => Ok(AbiKind::ArrayF64),
         RumbaType::Array1D(ScalarType::Bool) => Err(unsupported("bool arrays are not supported")),
     }
 }
@@ -456,41 +188,6 @@ fn validate_array(
     let len: i64 = arg.call_method0("__len__")?.extract()?;
     let data = arg.getattr("ctypes")?.getattr("data")?.extract::<usize>()?;
     Ok((data as *mut std::ffi::c_void, len))
-}
-
-fn arg_i64(args: &[NativeArg], index: usize) -> i64 {
-    match args[index] {
-        NativeArg::I64(value) => value,
-        _ => unreachable!(),
-    }
-}
-
-fn arg_f64(args: &[NativeArg], index: usize) -> f64 {
-    match args[index] {
-        NativeArg::F64(value) => value,
-        _ => unreachable!(),
-    }
-}
-
-fn arg_bool(args: &[NativeArg], index: usize) -> bool {
-    match args[index] {
-        NativeArg::Bool(value) => value,
-        _ => unreachable!(),
-    }
-}
-
-fn arg_array_i64(args: &[NativeArg], index: usize) -> ArrayI64View {
-    match args[index] {
-        NativeArg::ArrayI64(value) => value,
-        _ => unreachable!(),
-    }
-}
-
-fn arg_array_f64(args: &[NativeArg], index: usize) -> ArrayF64View {
-    match args[index] {
-        NativeArg::ArrayF64(value) => value,
-        _ => unreachable!(),
-    }
 }
 
 fn load_error(err: libloading::Error) -> PyErr {

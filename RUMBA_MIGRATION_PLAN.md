@@ -34,6 +34,16 @@ Python function object
   -> Rust/PyO3 dispatcher invokes compiled artifact
 ```
 
+Generated Rumba functions must be allocation-free by construction. Any memory
+needed to call a compiled artifact, including argument boxes, array-view
+metadata, return storage, and future wrapper-call scratch space, must be
+prepared before entering generated Rumba code. The generated C body and any
+generated native wrapper must not allocate Python objects, NumPy arrays, heap
+buffers, or runtime-owned containers. Features that require allocation, such as
+array constructors, array returns, broadcasting outputs, and object-mode
+fallbacks, remain unsupported until they have an explicit external ownership
+model.
+
 ## Current Implementation
 
 - Added `rumba/` as an independent `maturin` project with a PyO3 extension
@@ -214,6 +224,12 @@ Required capabilities:
 - Preserve inspection helpers for bytecode, Rumba AST, generated C, compiler
   command, and cache path. Implemented except typed AST.
 
+Runtime invocation should move toward a single generated native wrapper ABI
+instead of enumerating every scalar/array signature in Rust. Rust/PyO3 remains
+responsible for strict argument validation and for preparing all wrapper storage
+before the native call. The generated wrapper may reinterpret those already
+validated values for the compiled signature, but it must not allocate.
+
 ### Milestone 6: Rust Type Inference And Diagnostics
 
 Status: Dedicated pass implemented for current scalar and 1D array slice.
@@ -246,7 +262,8 @@ Remaining work:
 
 - Carry item size and stride metadata if non-contiguous or strided views become
   supported.
-- Broaden supported array ABI combinations deliberately.
+- Replace per-signature Rust match-arm dispatch with a generated wrapper ABI so
+  additional dtypes and array ranks do not require Rust-side ABI matrix growth.
 - Keep array-returning functions unsupported until ownership and lifetime rules
   are designed.
 

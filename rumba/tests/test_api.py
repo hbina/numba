@@ -125,7 +125,7 @@ def test_debug_option_emits_compilation_and_runtime_details(capfd):
     assert "[rumba-debug] compile: typed function:" in captured.err
     assert "locals:" in captured.err
     assert "[rumba-debug] compile: generated C source follows" in captured.err
-    assert "[rumba-debug] runtime: ABI kinds: [I64, I64]" in captured.err
+    assert "[rumba-debug] runtime: native wrapper argument count: 2" in captured.err
     assert "[rumba-debug] dispatcher: artifact return type: int64" in captured.err
 
 
@@ -143,6 +143,20 @@ def test_explicit_signature():
         return a + b
 
     assert add(2, 7) == 9
+
+
+def test_native_wrapper_handles_mixed_three_scalar_signature():
+    @rumba.njit
+    def combine(a, b, c):
+        return a + b + c
+
+    assert combine(1, 2.5, 3) == pytest.approx(6.5)
+    c_source = combine.inspect_c()
+    assert "double rumba_entry(int64_t a, double b, int64_t c)" in c_source
+    assert (
+        "*(double *)ret = rumba_entry(*(int64_t *)args[0], *(double *)args[1], *(int64_t *)args[2]);"
+        in c_source
+    )
 
 
 def test_unsupported_option_raises():

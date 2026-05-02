@@ -35,6 +35,7 @@ impl Emitter {
 
     pub(crate) fn emit(&mut self) -> PyResult<String> {
         let entry_source = self.emit_function("rumba_entry", true)?;
+        let call_wrapper = self.emit_call_wrapper();
         let mut source = vec![
             "#include <stdbool.h>".to_string(),
             "#include <stdint.h>".to_string(),
@@ -46,6 +47,7 @@ impl Emitter {
         ];
         source.append(&mut self.helper_sources);
         source.push(entry_source);
+        source.push(call_wrapper);
         Ok(format!("{}\n", source.join("\n")))
     }
 
@@ -77,6 +79,21 @@ impl Emitter {
 
         self.lines.push("}".to_string());
         Ok(format!("{}\n", self.lines.join("\n")))
+    }
+
+    fn emit_call_wrapper(&self) -> String {
+        let args = self
+            .function
+            .signature
+            .iter()
+            .enumerate()
+            .map(|(index, typ)| format!("*({} *)args[{index}]", typ.c_type()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "__attribute__((visibility(\"default\"))) void rumba_call(void **args, void *ret) {{\n    *({} *)ret = rumba_entry({args});\n}}\n",
+            self.function.return_type.c_type()
+        )
     }
 
     fn stmt(&mut self, node: &TypedStmt, level: usize) -> PyResult<()> {

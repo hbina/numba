@@ -170,6 +170,31 @@ def test_mixed_array_scalar_inspect_c_signatures():
     assert "double rumba_entry(rumba_array_i64 a, double x)" in array_then_scalar.inspect_c()
     assert "double rumba_entry(double x, rumba_array_f64 a)" in scalar_then_array.inspect_c()
     assert "double rumba_entry(rumba_array_f64 a, rumba_array_i64 b)" in arrays.inspect_c()
+    assert "void rumba_call(void **args, void *ret)" in array_then_scalar.inspect_c()
+    assert (
+        "*(double *)ret = rumba_entry(*(rumba_array_i64 *)args[0], *(double *)args[1]);"
+        in array_then_scalar.inspect_c()
+    )
+    assert (
+        "*(double *)ret = rumba_entry(*(double *)args[0], *(rumba_array_f64 *)args[1]);"
+        in scalar_then_array.inspect_c()
+    )
+
+
+def test_native_wrapper_handles_signature_without_rust_match_arm():
+    @rumba.njit
+    def float_array_len_plus_offset(a, offset):
+        return len(a) + offset
+
+    values = np.array([1.25, 2.5, 3.75], dtype=np.float64)
+
+    assert float_array_len_plus_offset(values, 4) == 7
+    c_source = float_array_len_plus_offset.inspect_c()
+    assert "int64_t rumba_entry(rumba_array_f64 a, int64_t offset)" in c_source
+    assert (
+        "*(int64_t *)ret = rumba_entry(*(rumba_array_f64 *)args[0], *(int64_t *)args[1]);"
+        in c_source
+    )
 
 
 def test_helper_function_reads_array():
