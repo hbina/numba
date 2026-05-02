@@ -2,10 +2,13 @@
 
 ## Summary
 
-`rumba` is a new top-level package whose purpose is to reimplement the useful
-core of Numba in Rust. It must not import, call, or depend on `numba`; Numba is
-only a reference for bytecode handling, supported semantics, NumPy overload
-behavior, diagnostics, and compatibility tests.
+`rumba` is a new top-level package whose purpose is to reimplement a focused,
+useful subset of Numba in Rust. The goal is not full Numba feature parity.
+Rumba should deliberately support a small Python syntax surface well, with
+clear unsupported-operation diagnostics outside that surface. It must not
+import, call, or depend on `numba`; Numba is only a reference for bytecode
+handling, supported semantics, NumPy overload behavior, diagnostics, and
+compatibility tests for features Rumba explicitly chooses to support.
 
 The long-term ownership model is Rust-first:
 
@@ -59,6 +62,11 @@ returns. It also supports initial 1D contiguous NumPy array handling for
 `int64` and `float64`, including `len(array)`, element load/store, dtype and
 layout validation, and scalar-returning kernels that mutate arrays in place.
 
+Current known gap in the chosen Python syntax subset:
+
+- Helper function calls are represented in the IR and typing path, but local
+  nested helper functions still fail because closures are rejected.
+
 ## Non-Negotiable Direction
 
 Rumba is not a Python reimplementation with a Rust helper. Rumba is a Rust
@@ -101,6 +109,32 @@ Supported options for now:
 
 Unsupported Numba options must raise `RumbaUnsupportedError` instead of being
 silently accepted or falling back to Python.
+
+## Target Python Syntax Subset
+
+Rumba intentionally targets a limited Python syntax subset. This subset is the
+near-term language contract; broad Python or Numba parity is out of scope unless
+explicitly added to this table.
+
+| Feature | Target | Current status | Notes |
+| ------- | ------ | -------------- | ----- |
+| `if` / `else` branches | Supported | Partial | Simple branches are supported. Broaden bytecode/control-flow handling and tests for nested branches and branch-local assignments. |
+| `elif` | Supported | Not complete | Treat as nested `else: if ...` in the AST/control-flow frontend and verify generated C preserves Python semantics. |
+| `for` loops | Supported for `range(...)` only | Partial | Keep support focused on `for i in range(...)`; iteration over lists, tuples, arrays, generators, and arbitrary objects remains unsupported. |
+| `range(start/stop/step)` | Supported | Partial | Support one-, two-, and three-argument integer ranges, including negative constant steps where practical. Reject non-integer range bounds. |
+| `while` loops | Supported | Not started | Add bytecode control-flow recognition, AST node, type checking for boolean conditions, C lowering, and tests. |
+| `break` / `continue` | Supported inside supported loops | Not started | Add structured loop exits in the AST/lowering. Reject use outside loops and unsupported nested-control-flow cases clearly. |
+| Local assignment | Supported | Implemented | Continue to require statically typed local variables in the Rust typing pass. |
+| Augmented assignment | Supported | Implemented | Current support is scalar-focused; array element augmented assignment should remain explicit future work. |
+| Arithmetic operators | Supported for scalar numeric values | Partial | Maintain support for the scalar numeric subset first: `+`, `-`, `*`, `/`, `//`, `%`, unary `+`, unary `-`. Broader operators are not implied. |
+| Comparisons | Supported for scalar values | Partial | Support equality and ordering comparisons for scalar numeric/bool combinations where typing and C lowering are defined. |
+| Boolean conditions | Supported | Partial | Conditions must type as `bool`. Truthiness for arrays, objects, lists, tuples, and arbitrary values remains unsupported. |
+| Unary operators | Supported for scalar values | Partial | Support unary numeric signs and boolean `not` for typed scalar expressions. |
+| Function calls | Supported for selected helper calls | Failing/partial | Support direct calls to analyzable helper functions without Python fallback. Local nested helpers/closures are currently rejected and need a deliberate design. |
+
+Everything outside this table should be treated as unsupported by default. New
+syntax must be added deliberately with frontend tests, typing tests, C codegen
+tests, execution tests, and unsupported-operation diagnostics.
 
 ## Architecture Milestones
 
@@ -213,18 +247,36 @@ Remaining work:
 - Keep array-returning functions unsupported until ownership and lifetime rules
   are designed.
 
-### Milestone 8: Compatibility Growth
+### Milestone 8: Focused Python Syntax Growth
 
-Status: Not started.
+Status: Partial.
 
-Add supported features deliberately, with Rust implementation and tests for
-each:
+Grow only the selected Python syntax subset, with Rust implementation and tests
+for each feature. This milestone replaces any broad Numba parity goal.
 
-- Selected `math` scalar functions.
-- Selected NumPy scalar functions.
-- Simple reductions.
-- `np.empty` for supported dtypes and one-dimensional shapes.
-- Limited broadcasting only after array views and scalar loops are stable.
+Required capabilities:
+
+- Complete simple `if` / `else` support, including nested branches and branch
+  merge diagnostics.
+- Add `elif` support through normalized nested branch handling.
+- Complete `range(start/stop/step)` handling for integer scalar bounds.
+- Add `while` loops with boolean typed conditions.
+- Add `break` and `continue` for supported `for range` and `while` loops.
+- Keep local assignment and augmented assignment stable as the control-flow
+  surface grows.
+- Broaden scalar arithmetic, comparison, boolean, and unary operator tests
+  within the supported scalar type set.
+- Make helper function calls reliable for supported non-closure helper
+  functions, or explicitly document and test the exact helper-call restrictions.
+
+Out of scope for this milestone:
+
+- Object mode or fallback to Python execution.
+- General Python iterators or iteration over containers.
+- Lists, dicts, sets, tuples, comprehensions, generators, exceptions, classes,
+  recursion, and closures unless a later milestone explicitly adds them.
+- Broad NumPy, math module, broadcasting, reductions, `np.empty`, GPU, or
+  parallel support.
 
 ### Milestone 9: Packaging And Developer Workflow
 
@@ -261,6 +313,10 @@ Python:
   C generation, cache keys, and compiler command construction.
 - Frontend tests for simple arithmetic, branches, loops, `range`, `len`, and
   array indexing.
+- Focused Python syntax tests for nested `if` / `else`, `elif`, one-, two-, and
+  three-argument `range`, `while`, `break`, `continue`, scalar arithmetic,
+  comparisons, boolean conditions, unary operators, local assignment, augmented
+  assignment, and supported helper calls.
 - Execution tests for scalar arithmetic, branches, loops, cache reuse, and
   distinct signatures.
 - NumPy tests for 1D array reads/writes, dtype mismatch, non-contiguous arrays,
