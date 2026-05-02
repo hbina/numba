@@ -373,3 +373,203 @@ def test_inspect_typed_ast_records_array_len_index_and_store_types():
     assert store["value"]["reason"] == "array_element"
     assert ret["value"]["kind"] == "Index"
     assert ret["value"]["type"] == "float64"
+
+
+@pytest.mark.parametrize(
+    ("dtype", "field", "expected"),
+    [
+        (np.dtype([("x", np.bool_)]), "x", True),
+        (np.dtype([("x", np.int8)]), "x", -3),
+        (np.dtype([("x", np.int16)]), "x", -300),
+        (np.dtype([("x", np.int32)]), "x", -30_000),
+        (np.dtype([("x", np.int64)]), "x", -3_000_000_000),
+        (np.dtype([("x", np.uint8)]), "x", 3),
+        (np.dtype([("x", np.uint16)]), "x", 300),
+        (np.dtype([("x", np.uint32)]), "x", 30_000),
+        (np.dtype([("x", np.uint64)]), "x", 3_000_000_000),
+        (np.dtype([("x", np.float32)]), "x", 1.5),
+        (np.dtype([("x", np.float64)]), "x", 2.5),
+    ],
+)
+def test_structured_array_field_reads(dtype, field, expected):
+    @rumba.njit
+    def first_field(a):
+        return a[0]["x"]
+
+    values = np.array([(expected,)], dtype=dtype)
+
+    assert first_field(values) == pytest.approx(expected)
+
+
+def test_structured_array_field_sum_with_len_and_scalar_argument():
+    @rumba.njit
+    def weighted(a, scale):
+        total = 0.0
+        for i in range(len(a)):
+            total += a[i]["count"] * scale + a[i]["weight"]
+        return total
+
+    dtype = np.dtype([("count", np.uint64), ("weight", np.float64)])
+    values = np.array([(1, 1.25), (2, 2.5), (3, 3.75)], dtype=dtype)
+
+    assert weighted(values, 2.5) == pytest.approx(22.5)
+
+
+def test_structured_array_field_mutation_updates_numpy_buffer():
+    @rumba.njit
+    def set_field(a, value):
+        a[1]["score"] = value
+        return a[1]["score"]
+
+    values = np.array([(1, 1.25), (2, 2.5)], dtype=[("id", np.int64), ("score", np.float64)])
+
+    assert set_field(values, 9) == pytest.approx(9.0)
+    assert values["score"].tolist() == [1.25, 9.0]
+
+
+def test_read_only_structured_arrays_rejected_when_function_stores():
+    @rumba.njit
+    def set_field(a, value):
+        a[0]["x"] = value
+        return a[0]["x"]
+
+    values = np.array([(1,), (2,)], dtype=[("x", np.int64)])
+    values.flags.writeable = False
+
+    with pytest.raises(RumbaUnsupportedError, match="read-only"):
+        set_field(values, 10)
+
+
+def test_structured_array_inspect_c_and_typed_ast():
+    @rumba.njit
+    def copy_field(a):
+        a[1]["value"] = a[0]["value"]
+        return a[1]["value"]
+
+    dtype = np.dtype(
+        {
+            "names": ["tag", "value"],
+            "formats": ["u1", "f8"],
+            "offsets": [0, 8],
+            "itemsize": 16,
+        }
+    )
+    values = np.array([(4, 1.5), (5, 2.5)], dtype=dtype)
+
+    assert copy_field(values) == pytest.approx(1.5)
+
+    c_source = copy_field.inspect_c()
+    assert "#include <stddef.h>" in c_source
+    assert "typedef struct rumba_struct_tag_u8_value_f64" in c_source
+    assert "uint8_t _pad0[7];" in c_source
+    assert "_Static_assert(sizeof(rumba_struct_tag_u8_value_f64) == 16" in c_source
+    assert "_Static_assert(offsetof(rumba_struct_tag_u8_value_f64, value) == 8" in c_source
+    assert "a.data[1].value = a.data[0].value;" in c_source
+
+    typed = copy_field.inspect_typed_ast()
+    store = typed["body"][0]
+    ret = typed["body"][1]
+    assert store["kind"] == "StoreIndexField"
+    assert store["field"] == "value"
+    assert store["field_type"] == "float64"
+    assert store["value"]["kind"] == "IndexField"
+    assert ret["value"]["kind"] == "IndexField"
+    assert ret["value"]["field"] == "value"
+
+
+def test_structured_array_bare_record_read_is_unsupported():
+    @rumba.njit
+    def first_record(a):
+        return a[0]
+
+    values = np.array([(1,)], dtype=[("x", np.int64)])
+
+    with pytest.raises(RumbaUnsupportedError, match=r"a\[i\]\['field'\]"):
+        first_record(values)
+
+
+def test_structured_array_dot_field_is_unsupported():
+    @rumba.njit
+    def dot_field(a):
+        return a[0].x
+
+    values = np.array([(1,)], dtype=[("x", np.int64)])
+
+    with pytest.raises(RumbaUnsupportedError, match="attribute access"):
+        dot_field(values)
+
+
+def test_structured_array_missing_field_is_unsupported():
+    @rumba.njit
+    def missing(a):
+        return a[0]["missing"]
+
+    values = np.array([(1,)], dtype=[("x", np.int64)])
+
+    with pytest.raises(RumbaUnsupportedError, match="does not exist"):
+        missing(values)
+
+
+def test_structured_array_non_string_field_key_is_unsupported():
+    @rumba.njit
+    def non_string(a):
+        return a[0][0]
+
+    values = np.array([(1,)], dtype=[("x", np.int64)])
+
+    with pytest.raises(RumbaUnsupportedError, match=r"a\[i\]\['field'\]"):
+        non_string(values)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        np.dtype([("bad-name", np.int64)]),
+        np.dtype([("x", object)]),
+        np.dtype([("x", np.complex128)]),
+        np.dtype([("x", [("y", np.int64)])]),
+        np.dtype([("x", np.int64, (2,))]),
+        np.dtype(
+            {
+                "names": ["a", "b"],
+                "formats": ["u1", "u8"],
+                "offsets": [0, 1],
+                "itemsize": 9,
+            }
+        ),
+    ],
+)
+def test_unsupported_structured_dtypes_raise(dtype):
+    @rumba.njit
+    def first_field(a):
+        return a[0]["x"]
+
+    values = np.zeros(2, dtype=dtype)
+
+    with pytest.raises(RumbaUnsupportedError):
+        first_field(values)
+
+
+def test_structured_array_2d_and_non_contiguous_are_unsupported():
+    @rumba.njit
+    def first_field(a):
+        return a[0]["x"]
+
+    dtype = np.dtype([("x", np.int64)])
+
+    with pytest.raises(RumbaUnsupportedError, match="only 1D"):
+        first_field(np.zeros((2, 2), dtype=dtype))
+
+    with pytest.raises(RumbaUnsupportedError, match="C-contiguous"):
+        first_field(np.zeros(4, dtype=dtype)[::2])
+
+
+def test_numpy_reductions_on_structured_arrays_are_unsupported():
+    @rumba.njit
+    def sum_records(a):
+        return np.sum(a)
+
+    values = np.array([(1,), (2,)], dtype=[("x", np.int64)])
+
+    with pytest.raises(RumbaUnsupportedError, match="structured arrays"):
+        sum_records(values)

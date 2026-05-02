@@ -26,7 +26,29 @@ Python values and prepares any argument or return storage before entering the
 compiled native function; generated C must not allocate Python objects, NumPy
 arrays, heap buffers, or runtime containers.
 
-Only scalar `int64`, `float64`, and `bool` arguments and scalar returns are
-supported in this first slice. Rust owns the importable module, decorator API,
-dispatcher, C emission, cache metadata, compiler selection, shared-library
-compilation, and native invocation.
+## Return Values And Output Buffers
+
+Rumba functions only support returning scalar values such as `int64`, `float64`,
+and `bool`. Returning a NumPy array is unsupported and raises
+`RumbaUnsupportedError`.
+
+If a function needs to produce array output, the caller must allocate the NumPy
+array and pass it as an output argument. The compiled function can then mutate
+that caller-owned buffer in place:
+
+```python
+@rumba.njit
+def fill(values, out):
+    for i in range(len(values)):
+        out[i] = values[i] * 2
+    return 0
+```
+
+This follows directly from Rumba's allocation-free execution model: generated
+code cannot allocate return arrays, so the caller is responsible for providing
+any array storage.
+
+Only scalar `int64`, `float64`, and `bool` values and supported 1D NumPy arrays
+are accepted by the current execution slice. Rust owns the importable module,
+decorator API, dispatcher, C emission, cache metadata, compiler selection,
+shared-library compilation, and native invocation.

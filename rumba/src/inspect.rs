@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::ir::{BinOp, CmpOp, ConstantValue, UnaryOp};
-use crate::types::{RumbaType, ScalarType};
+use crate::types::{FieldType, RumbaType, ScalarType};
 use crate::typing::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt};
 
 pub(crate) fn typed_function_to_py(py: Python<'_>, function: &TypedFunction) -> PyResult<PyObject> {
@@ -85,6 +85,24 @@ fn stmt_to_py(py: Python<'_>, stmt: &TypedStmt) -> PyResult<PyObject> {
             out.set_item("index", expr_to_py(py, index)?)?;
             out.set_item("value", expr_to_py(py, value)?)?;
         }
+        TypedStmt::StoreIndexField {
+            target,
+            index,
+            field,
+            value,
+            field_type,
+            dtype,
+        } => {
+            out.set_item("kind", "StoreIndexField")?;
+            out.set_item("target_type", target.typ.name())?;
+            out.set_item("dtype", &dtype.c_struct_name)?;
+            out.set_item("field", field)?;
+            out.set_item("field_type", field_type_name(*field_type))?;
+            out.set_item("value_type", value.typ.name())?;
+            out.set_item("target", expr_to_py(py, target)?)?;
+            out.set_item("index", expr_to_py(py, index)?)?;
+            out.set_item("value", expr_to_py(py, value)?)?;
+        }
         TypedStmt::If { test, body, orelse } => {
             out.set_item("kind", "If")?;
             out.set_item("test_type", test.typ.name())?;
@@ -123,6 +141,7 @@ fn expr_to_py(py: Python<'_>, expr: &TypedExpr) -> PyResult<PyObject> {
                 ConstantValue::Int(value) => out.set_item("value", value)?,
                 ConstantValue::Float(value) => out.set_item("value", value)?,
                 ConstantValue::Bool(value) => out.set_item("value", value)?,
+                ConstantValue::Str(value) => out.set_item("value", value)?,
             }
         }
         TypedExprKind::Name(name) => {
@@ -148,6 +167,19 @@ fn expr_to_py(py: Python<'_>, expr: &TypedExpr) -> PyResult<PyObject> {
             out.set_item("target", expr_to_py(py, target)?)?;
             out.set_item("index", expr_to_py(py, index)?)?;
         }
+        TypedExprKind::IndexField {
+            target,
+            index,
+            field,
+            field_type,
+        } => {
+            out.set_item("kind", "IndexField")?;
+            out.set_item("reason", "struct_array_field")?;
+            out.set_item("field", field)?;
+            out.set_item("field_type", field_type_name(*field_type))?;
+            out.set_item("target", expr_to_py(py, target)?)?;
+            out.set_item("index", expr_to_py(py, index)?)?;
+        }
         TypedExprKind::BinOp { left, op, right } => {
             out.set_item("kind", "BinOp")?;
             out.set_item("reason", "promote_numeric")?;
@@ -169,6 +201,22 @@ fn expr_to_py(py: Python<'_>, expr: &TypedExpr) -> PyResult<PyObject> {
         }
     }
     Ok(out.into())
+}
+
+fn field_type_name(typ: FieldType) -> &'static str {
+    match typ {
+        FieldType::Bool => "bool",
+        FieldType::Int8 => "int8",
+        FieldType::Int16 => "int16",
+        FieldType::Int32 => "int32",
+        FieldType::Int64 => "int64",
+        FieldType::UInt8 => "uint8",
+        FieldType::UInt16 => "uint16",
+        FieldType::UInt32 => "uint32",
+        FieldType::UInt64 => "uint64",
+        FieldType::Float32 => "float32",
+        FieldType::Float64 => "float64",
+    }
 }
 
 fn exprs_to_py(py: Python<'_>, exprs: &[TypedExpr]) -> PyResult<PyObject> {

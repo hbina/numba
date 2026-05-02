@@ -3,7 +3,7 @@ use pyo3::types::PyTuple;
 
 use crate::artifact::CompiledArtifact;
 use crate::errors::{compilation, unsupported};
-use crate::types::{RumbaType, ScalarType};
+use crate::types::{FieldType, RumbaType, ScalarType, StructDtype};
 use std::ffi::c_void;
 
 #[repr(C)]
@@ -20,6 +20,13 @@ struct ArrayF64View {
     len: i64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct ArrayStructView {
+    data: *mut c_void,
+    len: i64,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum NativeArg {
     I64(i64),
@@ -27,6 +34,7 @@ enum NativeArg {
     Bool(bool),
     ArrayI64(ArrayI64View),
     ArrayF64(ArrayF64View),
+    ArrayStruct(ArrayStructView),
 }
 
 pub(crate) fn call_native(
@@ -111,6 +119,7 @@ impl PreparedCall {
                 NativeArg::Bool(value) => (value as *mut bool).cast::<c_void>(),
                 NativeArg::ArrayI64(value) => (value as *mut ArrayI64View).cast::<c_void>(),
                 NativeArg::ArrayF64(value) => (value as *mut ArrayF64View).cast::<c_void>(),
+                NativeArg::ArrayStruct(value) => (value as *mut ArrayStructView).cast::<c_void>(),
             })
             .collect();
         Self { args, arg_ptrs }
@@ -141,6 +150,10 @@ fn prepare_arg(
             }))
         }
         RumbaType::Array1D(ScalarType::Bool) => Err(unsupported("bool arrays are not supported")),
+        RumbaType::Array1DStruct(dtype) => {
+            let (data, len) = validate_struct_array(arg, dtype, require_writable_array)?;
+            Ok(NativeArg::ArrayStruct(ArrayStructView { data, len }))
+        }
     }
 }
 
@@ -188,6 +201,135 @@ fn validate_array(
     let len: i64 = arg.call_method0("__len__")?.extract()?;
     let data = arg.getattr("ctypes")?.getattr("data")?.extract::<usize>()?;
     Ok((data as *mut std::ffi::c_void, len))
+}
+
+fn validate_struct_array(
+    arg: &Bound<'_, PyAny>,
+    expected: &StructDtype,
+    require_writable: bool,
+) -> PyResult<(*mut c_void, i64)> {
+    let py = arg.py();
+    let numpy = py
+        .import_bound("numpy")
+        .map_err(|_| unsupported("numpy is required for array arguments"))?;
+    let ndarray = numpy.getattr("ndarray")?;
+    if !arg.is_instance(&ndarray)? {
+        return Err(unsupported(
+            "structured array arguments must be numpy.ndarray instances",
+        ));
+    }
+    let ndim: i64 = arg.getattr("ndim")?.extract()?;
+    if ndim != 1 {
+        return Err(unsupported("only 1D structured numpy arrays are supported"));
+    }
+    let flags = arg.getattr("flags")?;
+    let c_contiguous: bool = flags.getattr("c_contiguous")?.extract()?;
+    let aligned: bool = flags.getattr("aligned")?.extract()?;
+    if !c_contiguous || !aligned {
+        return Err(unsupported(
+            "only C-contiguous aligned structured numpy arrays are supported",
+        ));
+    }
+    if require_writable {
+        let writeable: bool = flags.getattr("writeable")?.extract()?;
+        if !writeable {
+            return Err(unsupported(
+                "read-only numpy arrays cannot be passed to functions that assign array elements",
+            ));
+        }
+    }
+
+    let dtype = arg.getattr("dtype")?;
+    let names_obj = dtype.getattr("names")?;
+    if names_obj.is_none() {
+        return Err(unsupported(
+            "compiled signature expects a structured numpy dtype",
+        ));
+    }
+    let names: Vec<String> = names_obj.extract()?;
+    let expected_names = expected
+        .fields
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    if names != expected_names {
+        return Err(unsupported(format!(
+            "structured dtype field names/order mismatch; expected {:?}, got {:?}",
+            expected_names, names
+        )));
+    }
+    let itemsize: usize = dtype.getattr("itemsize")?.extract()?;
+    if itemsize != expected.itemsize {
+        return Err(unsupported(format!(
+            "structured dtype itemsize mismatch; expected {}, got {}",
+            expected.itemsize, itemsize
+        )));
+    }
+    let fields_dict = dtype.getattr("fields")?;
+    for ((name, expected_type), expected_offset) in
+        expected.fields.iter().zip(expected.offsets.iter())
+    {
+        let field_tuple = fields_dict.get_item(name.as_str())?;
+        let field_dtype = field_tuple.get_item(0)?;
+        let offset: usize = field_tuple.get_item(1)?.extract()?;
+        if offset != *expected_offset {
+            return Err(unsupported(format!(
+                "structured dtype field {name:?} offset mismatch; expected {}, got {}",
+                expected_offset, offset
+            )));
+        }
+        let actual_type = field_type_from_numpy_dtype(&field_dtype, name)?;
+        if actual_type != *expected_type {
+            return Err(unsupported(format!(
+                "structured dtype field {name:?} dtype mismatch; expected {}, got {}",
+                field_type_name(*expected_type),
+                field_type_name(actual_type)
+            )));
+        }
+    }
+
+    let len: i64 = arg.call_method0("__len__")?.extract()?;
+    let data = arg.getattr("ctypes")?.getattr("data")?.extract::<usize>()?;
+    Ok((data as *mut c_void, len))
+}
+
+fn field_type_from_numpy_dtype(dtype: &Bound<'_, PyAny>, name: &str) -> PyResult<FieldType> {
+    let subdtype = dtype.getattr("subdtype")?;
+    if !subdtype.is_none() {
+        return Err(unsupported(format!(
+            "field {name:?}: subarray fields are not supported"
+        )));
+    }
+    let field_names = dtype.getattr("names")?;
+    if !field_names.is_none() {
+        return Err(unsupported(format!(
+            "field {name:?}: nested struct fields are not supported"
+        )));
+    }
+    let kind_str: String = dtype.getattr("kind")?.extract()?;
+    let kind = kind_str.chars().next().unwrap_or('\0');
+    let itemsize: usize = dtype.getattr("itemsize")?.extract()?;
+    FieldType::from_numpy_kind_size(kind, itemsize).ok_or_else(|| {
+        unsupported(format!(
+            "field {name:?}: unsupported field dtype (kind={kind:?}, itemsize={itemsize})"
+        ))
+    })
+}
+
+fn field_type_name(typ: FieldType) -> &'static str {
+    match typ {
+        FieldType::Bool => "bool",
+        FieldType::Int8 => "int8",
+        FieldType::Int16 => "int16",
+        FieldType::Int32 => "int32",
+        FieldType::Int64 => "int64",
+        FieldType::UInt8 => "uint8",
+        FieldType::UInt16 => "uint16",
+        FieldType::UInt32 => "uint32",
+        FieldType::UInt64 => "uint64",
+        FieldType::Float32 => "float32",
+        FieldType::Float64 => "float64",
+    }
 }
 
 fn load_error(err: libloading::Error) -> PyErr {

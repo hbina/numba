@@ -47,8 +47,6 @@ EXPECTED_RUMBA_FAILURES = frozenset(
         "generated_binary_mul_bool_float64",
         "generated_branch_distance_bool_float64",
         "generated_binary_add_bool_bool",
-        "generated_structured_field_sum_array_struct_u64_f64",
-        "generated_structured_weighted_array_struct_u64_f64_float64",
     }
 )
 
@@ -276,6 +274,12 @@ def generate_structured_cases() -> list[Case]:
             "for i in range(len(a0)):\n"
             "    total += a0[i]['a'] * a1 + a0[i]['b']\n"
             "return total",
+        ),
+        _make_case(
+            "generated_structured_mutate_array_struct_u64_f64_float64",
+            lambda: (STRUCT_ARRAY_SPEC.factory(), 9.5),
+            "a0[1]['b'] = a1\n"
+            "return a0[1]['b']",
         ),
     ]
 

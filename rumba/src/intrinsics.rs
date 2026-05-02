@@ -76,7 +76,9 @@ impl IntrinsicId {
             Self::BuiltinLen => {
                 require_arg_count(self, args, 1)?;
                 match args[0].typ {
-                    RumbaType::Array1D(_) => Ok(RumbaType::Scalar(ScalarType::Int64)),
+                    RumbaType::Array1D(_) | RumbaType::Array1DStruct(_) => {
+                        Ok(RumbaType::Scalar(ScalarType::Int64))
+                    }
                     RumbaType::Scalar(_) => Err(unsupported("len expects a 1D numpy array")),
                 }
             }
@@ -117,6 +119,10 @@ impl IntrinsicId {
                 require_arg_count(self, args, 1)?;
                 match args[0].typ {
                     RumbaType::Array1D(element_type) => Ok(RumbaType::Scalar(element_type)),
+                    RumbaType::Array1DStruct(_) => Err(unsupported(format!(
+                        "{} does not support structured arrays; read a field first",
+                        self.name()
+                    ))),
                     RumbaType::Scalar(_) => Err(unsupported(format!(
                         "{} expects a 1D numpy array",
                         self.name()

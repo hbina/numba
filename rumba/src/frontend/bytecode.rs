@@ -278,20 +278,55 @@ impl<'a> BytecodeParser<'a> {
                 Opcode::BinarySubscr => {
                     let index_expr = pop_expr(&mut stack)?;
                     let target = pop_expr(&mut stack)?;
-                    stack.push(StackValue::Expr(ExprNode::Index {
-                        target: Box::new(target),
-                        index: Box::new(index_expr),
-                    }));
+                    match (index_expr, target) {
+                        (
+                            ExprNode::Constant(ConstantValue::Str(field)),
+                            ExprNode::Index {
+                                target: arr_target,
+                                index: arr_index,
+                            },
+                        ) => {
+                            stack.push(StackValue::Expr(ExprNode::IndexField {
+                                target: arr_target,
+                                index: arr_index,
+                                field,
+                            }));
+                        }
+                        (index_expr, target) => {
+                            stack.push(StackValue::Expr(ExprNode::Index {
+                                target: Box::new(target),
+                                index: Box::new(index_expr),
+                            }));
+                        }
+                    }
                 }
                 Opcode::StoreSubscr => {
                     let index_expr = pop_expr(&mut stack)?;
                     let target = pop_expr(&mut stack)?;
                     let value = pop_expr(&mut stack)?;
-                    statements.push(StmtNode::StoreIndex {
-                        target,
-                        index: index_expr,
-                        value,
-                    });
+                    match (index_expr, target) {
+                        (
+                            ExprNode::Constant(ConstantValue::Str(field)),
+                            ExprNode::Index {
+                                target: arr_target,
+                                index: arr_index,
+                            },
+                        ) => {
+                            statements.push(StmtNode::StoreIndexField {
+                                target: *arr_target,
+                                index: *arr_index,
+                                field,
+                                value,
+                            });
+                        }
+                        (index_expr, target) => {
+                            statements.push(StmtNode::StoreIndex {
+                                target,
+                                index: index_expr,
+                                value,
+                            });
+                        }
+                    }
                 }
                 Opcode::BinarySlice | Opcode::StoreSlice => {
                     return Err(unsupported("array slicing is not supported"));
@@ -688,6 +723,8 @@ fn extract_consts(tuple: &Bound<'_, PyTuple>) -> PyResult<Vec<Constant>> {
                 Ok(Constant::Scalar(ConstantValue::Int(value)))
             } else if let Ok(value) = item.extract::<f64>() {
                 Ok(Constant::Scalar(ConstantValue::Float(value)))
+            } else if let Ok(value) = item.extract::<String>() {
+                Ok(Constant::Scalar(ConstantValue::Str(value)))
             } else {
                 Ok(Constant::Unsupported(item.get_type().name()?.to_string()))
             }
@@ -976,6 +1013,7 @@ impl Constant {
             Constant::Scalar(ConstantValue::Bool(value)) => value.to_string(),
             Constant::Scalar(ConstantValue::Int(value)) => value.to_string(),
             Constant::Scalar(ConstantValue::Float(value)) => value.to_string(),
+            Constant::Scalar(ConstantValue::Str(value)) => format!("{value:?}"),
             Constant::Unsupported(name) => format!("<{name}>"),
         }
     }

@@ -71,7 +71,10 @@ local assignment, augmented assignment, helper function calls, and scalar
 returns. It also supports initial 1D contiguous NumPy array handling for
 `int64` and `float64`, including `len(array)`, element load/store, dtype and
 layout validation, selected builtin/math/NumPy reduction intrinsics, and
-scalar-returning kernels that mutate arrays in place.
+scalar-returning kernels that mutate arrays in place. Structured NumPy arrays
+are supported for the current 1D C-contiguous aligned slice when kernels read or
+write fields with `a[i]['field']`; structured arrays remain argument-only and
+bare record values are unsupported.
 
 Current known gap in the chosen Python syntax subset:
 
@@ -261,15 +264,19 @@ Initial array support is implemented for:
 - ABI representation containing data pointer and length. Implemented.
 - Lower array element load/store and `len(array)` to C. Implemented.
 - Support scalar-returning kernels that mutate arrays in place. Implemented.
+- 1D C-contiguous aligned structured dtype arguments with direct field
+  read/write through `a[i]['field']`. Implemented for bool, int/uint
+  8/16/32/64, float32, and float64 fields with C-representable layouts.
 
 Remaining work:
 
 - Carry item size and stride metadata if non-contiguous or strided views become
   supported.
-- Replace per-signature Rust match-arm dispatch with a generated wrapper ABI so
-  additional dtypes and array ranks do not require Rust-side ABI matrix growth.
 - Keep array-returning functions unsupported until ownership and lifetime rules
   are designed.
+- Extend structured dtype support beyond direct field access if record locals,
+  record returns, nested/subarray fields, complex/object fields, or non-readable
+  packed layouts become deliberate requirements.
 
 ### Milestone 8: Focused Python Syntax Growth
 

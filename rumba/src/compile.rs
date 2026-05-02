@@ -152,7 +152,7 @@ pub(crate) fn compile_parsed_function(
 
 fn has_store_index(body: &[StmtNode]) -> bool {
     body.iter().any(|stmt| match stmt {
-        StmtNode::StoreIndex { .. } => true,
+        StmtNode::StoreIndex { .. } | StmtNode::StoreIndexField { .. } => true,
         StmtNode::If { body, orelse, .. } => has_store_index(body) || has_store_index(orelse),
         StmtNode::ForRange { body, .. } => has_store_index(body),
         StmtNode::Return(_) | StmtNode::Assign { .. } | StmtNode::AugAssign { .. } => false,

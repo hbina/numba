@@ -25,6 +25,12 @@ pub(crate) enum StmtNode {
         index: ExprNode,
         value: ExprNode,
     },
+    StoreIndexField {
+        target: ExprNode,
+        index: ExprNode,
+        field: String,
+        value: ExprNode,
+    },
     If {
         test: ExprNode,
         body: Vec<StmtNode>,
@@ -46,6 +52,7 @@ impl StmtNode {
             Self::Assign { .. } => "Assign",
             Self::AugAssign { .. } => "AugAssign",
             Self::StoreIndex { .. } => "StoreIndex",
+            Self::StoreIndexField { .. } => "StoreIndexField",
             Self::If { .. } => "If",
             Self::ForRange { .. } => "For",
         }
@@ -63,6 +70,11 @@ pub(crate) enum ExprNode {
     Index {
         target: Box<ExprNode>,
         index: Box<ExprNode>,
+    },
+    IndexField {
+        target: Box<ExprNode>,
+        index: Box<ExprNode>,
+        field: String,
     },
     BinOp {
         left: Box<ExprNode>,
@@ -94,6 +106,7 @@ pub(crate) enum ConstantValue {
     Int(i64),
     Float(f64),
     Bool(bool),
+    Str(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

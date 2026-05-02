@@ -1,11 +1,14 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 
 use crate::errors::unsupported;
 use crate::intrinsics::IntrinsicId;
 use crate::ir::{BinOp, CallTarget, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp};
-use crate::types::{format_signature, promote_numeric, RumbaType, ScalarType};
+use crate::types::{
+    format_signature, promote_numeric, FieldType, RumbaType, ScalarType, StructDtype,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypedFunction {
@@ -35,6 +38,14 @@ pub(crate) enum TypedStmt {
         index: TypedExpr,
         value: TypedExpr,
         element_type: ScalarType,
+    },
+    StoreIndexField {
+        target: TypedExpr,
+        index: TypedExpr,
+        field: String,
+        value: TypedExpr,
+        field_type: FieldType,
+        dtype: Arc<StructDtype>,
     },
     If {
         test: TypedExpr,
@@ -72,6 +83,12 @@ pub(crate) enum TypedExprKind {
         target: Box<TypedExpr>,
         index: Box<TypedExpr>,
     },
+    IndexField {
+        target: Box<TypedExpr>,
+        index: Box<TypedExpr>,
+        field: String,
+        field_type: FieldType,
+    },
     BinOp {
         left: Box<TypedExpr>,
         op: BinOp,
@@ -100,7 +117,7 @@ pub(crate) fn type_function(
     let env = args
         .iter()
         .cloned()
-        .zip(signature.iter().copied())
+        .zip(signature.iter().cloned())
         .collect::<HashMap<_, _>>();
     let mut pass = TypePass {
         env,
@@ -131,7 +148,7 @@ pub(crate) fn type_function(
 fn local_types(args: &[String], env: &HashMap<String, RumbaType>) -> HashMap<String, RumbaType> {
     env.iter()
         .filter(|(name, _)| !args.contains(name))
-        .map(|(name, typ)| (name.clone(), *typ))
+        .map(|(name, typ)| (name.clone(), typ.clone()))
         .collect()
 }
 
@@ -160,14 +177,14 @@ impl TypePass {
             }
             StmtNode::Assign { name, value } => {
                 let expr = self.expr(value)?;
-                self.env.insert(name.clone(), expr.typ);
+                self.env.insert(name.clone(), expr.typ.clone());
                 Ok(TypedStmt::Assign {
                     name: name.clone(),
                     value: expr,
                 })
             }
             StmtNode::AugAssign { name, op, value } => {
-                let target_type = self.env.get(name).copied().ok_or_else(|| {
+                let target_type = self.env.get(name).cloned().ok_or_else(|| {
                     unsupported(format!("local variable {name:?} is used before assignment"))
                 })?;
                 if target_type.as_scalar().is_none() {
@@ -192,8 +209,13 @@ impl TypePass {
                 let target = self.expr(target)?;
                 let index = self.expr(index)?;
                 let value = self.expr(value)?;
-                let element_type = match target.typ {
-                    RumbaType::Array1D(typ) => typ,
+                let element_type = match &target.typ {
+                    RumbaType::Array1D(typ) => *typ,
+                    RumbaType::Array1DStruct(_) => {
+                        return Err(unsupported(
+                            "use a[i]['field'] syntax to assign struct array fields",
+                        ));
+                    }
                     RumbaType::Scalar(_) => {
                         return Err(unsupported("indexed assignment requires an array target"));
                     }
@@ -209,6 +231,44 @@ impl TypePass {
                     index,
                     value,
                     element_type,
+                })
+            }
+            StmtNode::StoreIndexField {
+                target,
+                index,
+                field,
+                value,
+            } => {
+                let target = self.expr(target)?;
+                let index = self.expr(index)?;
+                let value = self.expr(value)?;
+                let dtype = match &target.typ {
+                    RumbaType::Array1DStruct(dtype) => dtype.clone(),
+                    _ => {
+                        return Err(unsupported(
+                            "field assignment requires a structured array target",
+                        ));
+                    }
+                };
+                if index.typ != RumbaType::Scalar(ScalarType::Int64) {
+                    return Err(unsupported("struct array index must be an int64 scalar"));
+                }
+                let (field_type, _) = dtype.field(field).ok_or_else(|| {
+                    unsupported(format!(
+                        "field {field:?} does not exist in structured dtype {}",
+                        dtype.c_struct_name
+                    ))
+                })?;
+                if value.typ.as_scalar().is_none() {
+                    return Err(unsupported("struct field assignment value must be scalar"));
+                }
+                Ok(TypedStmt::StoreIndexField {
+                    target,
+                    index,
+                    field: field.clone(),
+                    value,
+                    field_type,
+                    dtype,
                 })
             }
             StmtNode::If { test, body, orelse } => {
@@ -313,13 +373,18 @@ impl TypePass {
                     ConstantValue::Bool(_) => RumbaType::Scalar(ScalarType::Bool),
                     ConstantValue::Int(_) => RumbaType::Scalar(ScalarType::Int64),
                     ConstantValue::Float(_) => RumbaType::Scalar(ScalarType::Float64),
+                    ConstantValue::Str(_) => {
+                        return Err(unsupported(
+                            "string constants are only valid as struct field keys (a[i]['field'])",
+                        ));
+                    }
                 },
             }),
             ExprNode::Name(name) => {
                 let typ = self
                     .env
                     .get(name)
-                    .copied()
+                    .cloned()
                     .ok_or_else(|| {
                         if self.branch_only.contains(name) {
                             unsupported(format!(
@@ -344,7 +409,7 @@ impl TypePass {
                         function,
                         explicit_signature,
                     } => {
-                        let signature = args.iter().map(|arg| arg.typ).collect::<Vec<_>>();
+                        let signature = args.iter().map(|arg| arg.typ.clone()).collect::<Vec<_>>();
                         if let Some(explicit_signature) = explicit_signature {
                             if explicit_signature != &signature {
                                 return Err(unsupported(format!(
@@ -385,8 +450,13 @@ impl TypePass {
             ExprNode::Index { target, index } => {
                 let target = self.expr(target)?;
                 let index = self.expr(index)?;
-                let element_type = match target.typ {
-                    RumbaType::Array1D(typ) => typ,
+                let element_type = match &target.typ {
+                    RumbaType::Array1D(typ) => *typ,
+                    RumbaType::Array1DStruct(_) => {
+                        return Err(unsupported(
+                            "use a[i]['field'] syntax to read struct array fields",
+                        ));
+                    }
                     RumbaType::Scalar(_) => return Err(unsupported("indexing requires an array")),
                 };
                 if index.typ != RumbaType::Scalar(ScalarType::Int64) {
@@ -398,6 +468,41 @@ impl TypePass {
                         index: Box::new(index),
                     },
                     typ: RumbaType::Scalar(element_type),
+                })
+            }
+            ExprNode::IndexField {
+                target,
+                index,
+                field,
+            } => {
+                let target = self.expr(target)?;
+                let index = self.expr(index)?;
+                let dtype = match &target.typ {
+                    RumbaType::Array1DStruct(dtype) => dtype.clone(),
+                    _ => {
+                        return Err(unsupported(
+                            "field indexing requires a structured array; use a[i]['field']",
+                        ));
+                    }
+                };
+                if index.typ != RumbaType::Scalar(ScalarType::Int64) {
+                    return Err(unsupported("struct array index must be an int64 scalar"));
+                }
+                let (field_type, _) = dtype.field(field).ok_or_else(|| {
+                    unsupported(format!(
+                        "field {field:?} does not exist in structured dtype {}",
+                        dtype.c_struct_name
+                    ))
+                })?;
+                let scalar_type = field_type.to_scalar_type();
+                Ok(TypedExpr {
+                    kind: TypedExprKind::IndexField {
+                        target: Box::new(target),
+                        index: Box::new(index),
+                        field: field.clone(),
+                        field_type,
+                    },
+                    typ: RumbaType::Scalar(scalar_type),
                 })
             }
             ExprNode::BinOp { left, op, right } => {
@@ -424,7 +529,7 @@ impl TypePass {
                 let value = self.expr(value)?;
                 let typ = match op {
                     UnaryOp::Not => RumbaType::Scalar(ScalarType::Bool),
-                    UnaryOp::USub | UnaryOp::UAdd => value.typ,
+                    UnaryOp::USub | UnaryOp::UAdd => value.typ.clone(),
                 };
                 Ok(TypedExpr {
                     typ,
@@ -474,18 +579,30 @@ fn merge_branch_envs(
 
     let mut merged = HashMap::new();
     for name in names {
-        let before_type = before.get(&name).copied();
-        let body_type = body.get(&name).copied();
-        let else_type = orelse.get(&name).copied();
+        let before_type = before.get(&name).cloned();
+        let body_type = body.get(&name).cloned();
+        let else_type = orelse.get(&name).cloned();
         match (before_type, body_type, else_type) {
-            (Some(_), Some(body_type), Some(else_type)) if body_type != else_type => {
-                return Err(incompatible_branch_type(&name, body_type, else_type));
+            (Some(_), Some(ref body_type), Some(ref else_type)) if body_type != else_type => {
+                return Err(incompatible_branch_type(
+                    &name,
+                    body_type.clone(),
+                    else_type.clone(),
+                ));
             }
-            (Some(before_type), Some(body_type), None) if body_type != before_type => {
-                return Err(incompatible_branch_type(&name, body_type, before_type));
+            (Some(ref before_type), Some(ref body_type), None) if body_type != before_type => {
+                return Err(incompatible_branch_type(
+                    &name,
+                    body_type.clone(),
+                    before_type.clone(),
+                ));
             }
-            (Some(before_type), None, Some(else_type)) if else_type != before_type => {
-                return Err(incompatible_branch_type(&name, before_type, else_type));
+            (Some(ref before_type), None, Some(ref else_type)) if else_type != before_type => {
+                return Err(incompatible_branch_type(
+                    &name,
+                    before_type.clone(),
+                    else_type.clone(),
+                ));
             }
             (Some(_), Some(body_type), Some(_)) => {
                 merged.insert(name, body_type);
@@ -495,7 +612,7 @@ fn merge_branch_envs(
             | (Some(before_type), None, None) => {
                 merged.insert(name, before_type);
             }
-            (None, Some(body_type), Some(else_type)) if body_type == else_type => {
+            (None, Some(body_type), Some(ref else_type)) if &body_type == else_type => {
                 merged.insert(name, body_type);
             }
             (None, Some(body_type), Some(else_type)) => {
@@ -518,7 +635,11 @@ fn reject_incompatible_common_branch_locals(
         }
         if let Some(else_type) = orelse.get(name) {
             if body_type != else_type {
-                return Err(incompatible_branch_type(name, *body_type, *else_type));
+                return Err(incompatible_branch_type(
+                    name,
+                    body_type.clone(),
+                    else_type.clone(),
+                ));
             }
         }
     }

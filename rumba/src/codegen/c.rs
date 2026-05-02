@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
 
+use crate::errors::unsupported;
 use crate::intrinsics::IntrinsicId;
-use crate::types::RumbaType;
-use crate::types::ScalarType;
+use crate::types::{RumbaType, ScalarType, StructDtype};
 use crate::typing::{helper_key, TypedExpr, TypedExprKind, TypedFunction, TypedStmt};
 
 struct CExpr {
@@ -34,17 +34,23 @@ impl Emitter {
     }
 
     pub(crate) fn emit(&mut self) -> PyResult<String> {
+        let struct_dtypes = collect_struct_dtypes(&self.function);
         let entry_source = self.emit_function("rumba_entry", true)?;
         let call_wrapper = self.emit_call_wrapper();
         let mut source = vec![
             "#include <stdbool.h>".to_string(),
             "#include <stdint.h>".to_string(),
+            "#include <stddef.h>".to_string(),
             "#include <math.h>".to_string(),
             String::new(),
             "typedef struct { int64_t *data; int64_t len; } rumba_array_i64;".to_string(),
             "typedef struct { double *data; int64_t len; } rumba_array_f64;".to_string(),
             String::new(),
         ];
+        source.extend(struct_dtypes.iter().map(|dtype| emit_struct_dtype(dtype)));
+        if !struct_dtypes.is_empty() {
+            source.push(String::new());
+        }
         source.append(&mut self.helper_sources);
         source.push(entry_source);
         source.push(call_wrapper);
@@ -158,6 +164,35 @@ impl Emitter {
                     rhs
                 ));
             }
+            TypedStmt::StoreIndexField {
+                target,
+                index,
+                field,
+                value,
+                field_type,
+                ..
+            } => {
+                let target = self.expr(target)?;
+                let index = self.expr(index)?;
+                let value_type = value
+                    .typ
+                    .as_scalar()
+                    .expect("typed scalar struct field assignment");
+                let value = self.expr(value)?;
+                let rhs = if value_type.c_type() == field_type.c_type() {
+                    value.code
+                } else {
+                    format!("({})({})", field_type.c_type(), value.code)
+                };
+                self.lines.push(format!(
+                    "{}{}.data[{}].{} = {};",
+                    indent(level),
+                    target.code,
+                    index.code,
+                    field,
+                    rhs
+                ));
+            }
             TypedStmt::If { test, body, orelse } => {
                 let test = self.expr(test)?;
                 let declared_before = self.declared.clone();
@@ -229,6 +264,11 @@ impl Emitter {
                     }
                     crate::ir::ConstantValue::Int(value) => value.to_string(),
                     crate::ir::ConstantValue::Float(value) => value.to_string(),
+                    crate::ir::ConstantValue::Str(_) => {
+                        return Err(unsupported(
+                            "string constants are only valid as struct field keys (a[i]['field'])",
+                        ));
+                    }
                 },
             }),
             TypedExprKind::Name(name) => Ok(CExpr { code: name.clone() }),
@@ -255,13 +295,25 @@ impl Emitter {
                 })
             }
             TypedExprKind::IntrinsicCall { intrinsic, args } => {
-                self.intrinsic_expr(*intrinsic, args, node.typ)
+                self.intrinsic_expr(*intrinsic, args, node.typ.clone())
             }
             TypedExprKind::Index { target, index } => {
                 let target = self.expr(target)?;
                 let index = self.expr(index)?;
                 Ok(CExpr {
                     code: format!("{}.data[{}]", target.code, index.code),
+                })
+            }
+            TypedExprKind::IndexField {
+                target,
+                index,
+                field,
+                ..
+            } => {
+                let target = self.expr(target)?;
+                let index = self.expr(index)?;
+                Ok(CExpr {
+                    code: format!("{}.data[{}].{}", target.code, index.code, field),
                 })
             }
             TypedExprKind::BinOp { left, op, right } => {
@@ -342,6 +394,9 @@ impl Emitter {
             IntrinsicId::NumpyMax | IntrinsicId::NumpyMin | IntrinsicId::NumpySum => {
                 let array_type = match args[0].typ {
                     RumbaType::Array1D(element_type) => element_type,
+                    RumbaType::Array1DStruct(_) => {
+                        unreachable!("numpy reductions reject structured arrays during typing")
+                    }
                     RumbaType::Scalar(_) => unreachable!("numpy reductions require array"),
                 };
                 let helper = self.ensure_numpy_reduction_helper(intrinsic, array_type);
@@ -418,6 +473,155 @@ impl Emitter {
         self.intrinsic_cache.insert(key.clone(), key.clone());
         key
     }
+}
+
+fn collect_struct_dtypes(function: &TypedFunction) -> Vec<StructDtype> {
+    let mut out = Vec::new();
+    collect_struct_dtypes_from_function(function, &mut out);
+    out
+}
+
+fn collect_struct_dtypes_from_function(function: &TypedFunction, out: &mut Vec<StructDtype>) {
+    for typ in function.signature.iter().chain(function.locals.values()) {
+        collect_struct_dtype_from_type(typ, out);
+    }
+    for stmt in &function.body {
+        collect_struct_dtypes_from_stmt(stmt, out);
+    }
+}
+
+fn collect_struct_dtypes_from_stmt(stmt: &TypedStmt, out: &mut Vec<StructDtype>) {
+    match stmt {
+        TypedStmt::Return(value) | TypedStmt::Assign { value, .. } => {
+            collect_struct_dtypes_from_expr(value, out);
+        }
+        TypedStmt::AugAssign {
+            value, target_type, ..
+        } => {
+            collect_struct_dtype_from_type(target_type, out);
+            collect_struct_dtypes_from_expr(value, out);
+        }
+        TypedStmt::StoreIndex {
+            target,
+            index,
+            value,
+            ..
+        } => {
+            collect_struct_dtypes_from_expr(target, out);
+            collect_struct_dtypes_from_expr(index, out);
+            collect_struct_dtypes_from_expr(value, out);
+        }
+        TypedStmt::StoreIndexField {
+            target,
+            index,
+            value,
+            dtype,
+            ..
+        } => {
+            collect_struct_dtype(dtype, out);
+            collect_struct_dtypes_from_expr(target, out);
+            collect_struct_dtypes_from_expr(index, out);
+            collect_struct_dtypes_from_expr(value, out);
+        }
+        TypedStmt::If { test, body, orelse } => {
+            collect_struct_dtypes_from_expr(test, out);
+            for stmt in body.iter().chain(orelse.iter()) {
+                collect_struct_dtypes_from_stmt(stmt, out);
+            }
+        }
+        TypedStmt::ForRange {
+            start,
+            stop,
+            step,
+            body,
+            ..
+        } => {
+            collect_struct_dtypes_from_expr(start, out);
+            collect_struct_dtypes_from_expr(stop, out);
+            collect_struct_dtypes_from_expr(step, out);
+            for stmt in body {
+                collect_struct_dtypes_from_stmt(stmt, out);
+            }
+        }
+    }
+}
+
+fn collect_struct_dtypes_from_expr(expr: &TypedExpr, out: &mut Vec<StructDtype>) {
+    collect_struct_dtype_from_type(&expr.typ, out);
+    match &expr.kind {
+        TypedExprKind::Call { function, args } => {
+            collect_struct_dtypes_from_function(function, out);
+            for arg in args {
+                collect_struct_dtypes_from_expr(arg, out);
+            }
+        }
+        TypedExprKind::IntrinsicCall { args, .. } => {
+            for arg in args {
+                collect_struct_dtypes_from_expr(arg, out);
+            }
+        }
+        TypedExprKind::Index { target, index }
+        | TypedExprKind::IndexField { target, index, .. } => {
+            collect_struct_dtypes_from_expr(target, out);
+            collect_struct_dtypes_from_expr(index, out);
+        }
+        TypedExprKind::BinOp { left, right, .. } | TypedExprKind::Compare { left, right, .. } => {
+            collect_struct_dtypes_from_expr(left, out);
+            collect_struct_dtypes_from_expr(right, out);
+        }
+        TypedExprKind::UnaryOp { value, .. } => collect_struct_dtypes_from_expr(value, out),
+        TypedExprKind::Constant(_) | TypedExprKind::Name(_) => {}
+    }
+}
+
+fn collect_struct_dtype_from_type(typ: &RumbaType, out: &mut Vec<StructDtype>) {
+    if let RumbaType::Array1DStruct(dtype) = typ {
+        collect_struct_dtype(dtype, out);
+    }
+}
+
+fn collect_struct_dtype(dtype: &StructDtype, out: &mut Vec<StructDtype>) {
+    if !out.iter().any(|existing| existing == dtype) {
+        out.push(dtype.clone());
+    }
+}
+
+fn emit_struct_dtype(dtype: &StructDtype) -> String {
+    let mut lines = vec![format!("typedef struct {} {{", dtype.c_struct_name)];
+    let mut cursor = 0_usize;
+    let mut pad_index = 0_usize;
+    for ((name, field_type), offset) in dtype.fields.iter().zip(dtype.offsets.iter()) {
+        if *offset > cursor {
+            lines.push(format!("    uint8_t _pad{pad_index}[{}];", offset - cursor));
+            pad_index += 1;
+            cursor = *offset;
+        }
+        lines.push(format!("    {} {};", field_type.c_type(), name));
+        cursor += field_type.byte_size();
+    }
+    if dtype.itemsize > cursor {
+        lines.push(format!(
+            "    uint8_t _pad{pad_index}[{}];",
+            dtype.itemsize - cursor
+        ));
+    }
+    lines.push(format!("}} {};", dtype.c_struct_name));
+    lines.push(format!(
+        "typedef struct {{ {} *data; int64_t len; }} {};",
+        dtype.c_struct_name, dtype.c_array_name
+    ));
+    lines.push(format!(
+        "_Static_assert(sizeof({}) == {}, \"{} size mismatch\");",
+        dtype.c_struct_name, dtype.itemsize, dtype.c_struct_name
+    ));
+    for ((name, _), offset) in dtype.fields.iter().zip(dtype.offsets.iter()) {
+        lines.push(format!(
+            "_Static_assert(offsetof({}, {}) == {}, \"{} offset mismatch\");",
+            dtype.c_struct_name, name, offset, name
+        ));
+    }
+    lines.push(String::new());
+    lines.join("\n")
 }
 
 fn indent(level: usize) -> String {

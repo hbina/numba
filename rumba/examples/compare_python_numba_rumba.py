@@ -1,4 +1,4 @@
-"""Compare Python, Numba, and Rumba on the current scalar subset.
+"""Compare Python, Numba, and Rumba on the current supported subset.
 
 Run from this directory after installing Rumba:
 
@@ -89,6 +89,25 @@ def intrinsic_score_f64(values):
     return magnitude + wave + reduction + len(values) + span
 
 
+def structured_field_sum(records):
+    total = 0.0
+    for i in range(len(records)):
+        total += records[i]["count"] + records[i]["weight"]
+    return total
+
+
+def structured_weighted_score(records, scale):
+    total = 0.0
+    for i in range(len(records)):
+        total += records[i]["count"] * scale + records[i]["weight"]
+    return total
+
+
+def structured_update_weight(records, replacement):
+    records[1]["weight"] = replacement
+    return records[1]["weight"]
+
+
 rumba_add_i64 = rumba.njit(add_i64)
 rumba_distance_f64 = rumba.njit(distance_f64)
 rumba_triangular_i64 = rumba.njit(triangular_i64)
@@ -98,6 +117,9 @@ rumba_nested_branch_i64 = rumba.njit(nested_branch_i64)
 rumba_classify_i64 = rumba.njit(classify_i64)
 rumba_combined_control_flow_i64 = rumba.njit(combined_control_flow_i64)
 rumba_intrinsic_score_f64 = rumba.njit(intrinsic_score_f64)
+rumba_structured_field_sum = rumba.njit(structured_field_sum)
+rumba_structured_weighted_score = rumba.njit(structured_weighted_score)
+rumba_structured_update_weight = rumba.njit(structured_update_weight)
 
 
 def combined_functions(a, b, c):
@@ -125,6 +147,41 @@ CASES = (
         "intrinsic_score_f64",
         intrinsic_score_f64,
         (np.array([9.0, 2.5, 4.75], dtype=np.float64),),
+        True,
+    ),
+    (
+        "structured_field_sum",
+        structured_field_sum,
+        (
+            np.array(
+                [(1, 1.25), (2, 2.5), (3, 3.75)],
+                dtype=np.dtype([("count", np.uint64), ("weight", np.float64)]),
+            ),
+        ),
+        True,
+    ),
+    (
+        "structured_weighted_score",
+        structured_weighted_score,
+        (
+            np.array(
+                [(1, 1.25), (2, 2.5), (3, 3.75)],
+                dtype=np.dtype([("count", np.uint64), ("weight", np.float64)]),
+            ),
+            2.5,
+        ),
+        True,
+    ),
+    (
+        "structured_update_weight",
+        structured_update_weight,
+        (
+            np.array(
+                [(1, 1.25), (2, 2.5), (3, 3.75)],
+                dtype=np.dtype([("count", np.uint64), ("weight", np.float64)]),
+            ),
+            9.5,
+        ),
         True,
     ),
     ("combined_functions", combined_functions, (3, 5, 7), False),
