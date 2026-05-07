@@ -26,3 +26,6 @@ htmlcov/
 __pycache__/
 
 docs/source/developer/autogen*
+
+.codex
+.claude
