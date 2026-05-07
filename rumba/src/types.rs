@@ -360,10 +360,42 @@ fn is_safe_c_identifier(name: &str) -> bool {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum DtypeSpec {
+    Scalar(ScalarType),
+    Struct(Arc<StructDtype>),
+}
+
+impl DtypeSpec {
+    pub(crate) fn from_numpy_dtype(dtype: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let names = dtype.getattr("names")?;
+        if !names.is_none() {
+            return Ok(Self::Struct(StructDtype::from_numpy_dtype(dtype)?));
+        }
+        let dtype_str = dtype.str()?.to_str()?.to_string();
+        match dtype_str.as_str() {
+            "int64" => Ok(Self::Scalar(ScalarType::Int64)),
+            "float64" => Ok(Self::Scalar(ScalarType::Float64)),
+            other => Err(unsupported(format!(
+                "np.frombuffer dtype {other} is not supported; supported scalar dtypes are int64 and float64, plus supported structured dtypes"
+            ))),
+        }
+    }
+
+    pub(crate) fn name(&self) -> String {
+        match self {
+            Self::Scalar(typ) => format!("dtype({})", typ.name()),
+            Self::Struct(dtype) => format!("dtype({})", dtype.c_struct_name),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum RumbaType {
     Scalar(ScalarType),
     Array1D(ScalarType),
     Array1DStruct(Arc<StructDtype>),
+    ByteBuffer,
+    Dtype(DtypeSpec),
 }
 
 impl RumbaType {
@@ -372,6 +404,7 @@ impl RumbaType {
             "int64" | "float64" | "bool" => Ok(Self::Scalar(ScalarType::from_name(name)?)),
             "array(int64, 1d, C)" => Ok(Self::Array1D(ScalarType::Int64)),
             "array(float64, 1d, C)" => Ok(Self::Array1D(ScalarType::Float64)),
+            "bytebuffer(uint8, 1d, C)" => Ok(Self::ByteBuffer),
             other => Err(unsupported(format!("unsupported signature type {other:?}"))),
         }
     }
@@ -395,8 +428,9 @@ impl RumbaType {
             return match dtype_str.as_str() {
                 "int64" => Ok(Self::Array1D(ScalarType::Int64)),
                 "float64" => Ok(Self::Array1D(ScalarType::Float64)),
+                "uint8" => Ok(Self::ByteBuffer),
                 other => Err(unsupported(format!(
-                    "unsupported numpy array dtype {other}; supported array dtypes are int64, float64, and structured dtypes"
+                    "unsupported numpy array dtype {other}; supported array dtypes are int64, float64, uint8 byte buffers, and structured dtypes"
                 ))),
             };
         }
@@ -416,6 +450,8 @@ impl RumbaType {
                     .join(",");
                 format!("array(struct{{{fields}}}, 1d, C)")
             }
+            Self::ByteBuffer => "bytebuffer(uint8, 1d, C)".to_string(),
+            Self::Dtype(dtype) => dtype.name(),
         }
     }
 
@@ -426,13 +462,15 @@ impl RumbaType {
             Self::Array1D(ScalarType::Float64) => "rumba_array_f64".to_string(),
             Self::Array1D(ScalarType::Bool) => "rumba_array_bool".to_string(),
             Self::Array1DStruct(dtype) => dtype.c_array_name.clone(),
+            Self::ByteBuffer => "rumba_byte_buffer".to_string(),
+            Self::Dtype(_) => "void *".to_string(),
         }
     }
 
     pub(crate) fn as_scalar(&self) -> Option<ScalarType> {
         match self {
             Self::Scalar(typ) => Some(*typ),
-            Self::Array1D(_) | Self::Array1DStruct(_) => None,
+            Self::Array1D(_) | Self::Array1DStruct(_) | Self::ByteBuffer | Self::Dtype(_) => None,
         }
     }
 }
@@ -531,7 +569,10 @@ pub(crate) fn signature_tuple(py: Python<'_>, signature: &[RumbaType]) -> PyResu
             RumbaType::Scalar(typ) => {
                 Py::new(py, PyScalarType { typ: *typ }).map(|obj| obj.into_py(py))
             }
-            RumbaType::Array1D(_) | RumbaType::Array1DStruct(_) => Ok(typ.name().into_py(py)),
+            RumbaType::Array1D(_)
+            | RumbaType::Array1DStruct(_)
+            | RumbaType::ByteBuffer
+            | RumbaType::Dtype(_) => Ok(typ.name().into_py(py)),
         })
         .collect::<PyResult<Vec<_>>>()?;
     Ok(PyTuple::new_bound(py, items).into())

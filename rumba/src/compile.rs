@@ -156,7 +156,11 @@ fn has_store_index(body: &[StmtNode]) -> bool {
         StmtNode::If { body, orelse, .. } => has_store_index(body) || has_store_index(orelse),
         StmtNode::While { body, .. } => has_store_index(body),
         StmtNode::ForRange { body, .. } => has_store_index(body),
+        StmtNode::ForGenerator { function, body, .. } => {
+            has_store_index(&function.body) || has_store_index(body)
+        }
         StmtNode::Return(_)
+        | StmtNode::Yield(_)
         | StmtNode::Break
         | StmtNode::Continue
         | StmtNode::Assign { .. }

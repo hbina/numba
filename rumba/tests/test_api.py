@@ -36,6 +36,49 @@ def _plain_python_helper(a):
     return a + 1
 
 
+def _plain_python_gen(n):
+    for i in range(n):
+        yield i
+
+
+@rumba.njit
+def _gen_times_two(n):
+    for i in range(n):
+        yield i * 2
+
+
+@rumba.njit
+def _gen_branch(n):
+    for i in range(n):
+        if i == 1:
+            yield i
+        yield i + 2
+
+
+@rumba.njit
+def _gen_mixed(n):
+    yield 1
+    yield 2.5
+
+
+@rumba.njit
+def _gen_return_value(n):
+    yield n
+    return n
+
+
+@rumba.njit
+def _gen_float(n):
+    for i in range(n):
+        yield float(i) + 0.5
+
+
+@rumba.njit
+def _gen_bool(n):
+    for i in range(n):
+        yield i == 1
+
+
 @rumba.njit
 def _recursive_helper(a):
     if a == 0:
@@ -210,6 +253,90 @@ def test_loop_execution():
         return acc
 
     assert total(6) == 15
+
+
+def test_generator_helper_loop_executes_expression_yields():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for value in _gen_times_two(n):
+            acc += value
+        return acc
+
+    assert total(5) == 20
+    typed = total.inspect_typed_ast()
+    assert typed["body"][1]["kind"] == "ForGenerator"
+    assert typed["body"][1]["target_type"] == "int64"
+
+
+def test_generator_helper_loop_executes_branch_and_multiple_yields():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for value in _gen_branch(n):
+            acc += value
+        return acc
+
+    assert total(3) == 10
+
+
+def test_generator_helper_loop_executes_float_and_bool_yields():
+    @rumba.njit
+    def total_float(n):
+        acc = 0.0
+        for value in _gen_float(n):
+            acc += value
+        return acc
+
+    @rumba.njit
+    def count_true(n):
+        acc = 0
+        for value in _gen_bool(n):
+            if value:
+                acc += 1
+        return acc
+
+    assert total_float(3) == pytest.approx(4.5)
+    assert count_true(4) == 1
+
+
+def test_generator_mixed_yield_types_raise():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for value in _gen_mixed(n):
+            acc += value
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="generator yield values require exact matching"):
+        total(1)
+
+
+def test_generator_return_value_raises():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for value in _gen_return_value(n):
+            acc += value
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="return values from generator helpers"):
+        total(1)
+
+
+def test_plain_python_generator_helper_raises():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for value in _plain_python_gen(n):
+            acc += value
+        return acc
+
+    with pytest.raises(
+        RumbaUnsupportedError,
+        match="helper calls require @rumba.njit-decorated functions",
+    ):
+        total(1)
 
 
 def test_inspection_helpers():

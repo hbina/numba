@@ -10,6 +10,11 @@ def _first(a):
     return a[0]
 
 
+@rumba.njit
+def _yield_array(a):
+    yield a
+
+
 def test_sum_int64_array_with_len_and_indexing():
     @rumba.njit
     def total(a):
@@ -22,6 +27,19 @@ def test_sum_int64_array_with_len_and_indexing():
 
     assert total(values) == 15
     assert total.signatures == [("array(int64, 1d, C)",)]
+
+
+def test_generator_yielding_array_is_rejected():
+    @rumba.njit
+    def total(a):
+        acc = 0
+        for value in _yield_array(a):
+            acc += len(value)
+        return acc
+
+    values = np.arange(3, dtype=np.int64)
+    with pytest.raises(RumbaUnsupportedError, match="generator yield values must be scalar"):
+        total(values)
 
 
 def test_sum_float64_array_with_len_and_indexing():

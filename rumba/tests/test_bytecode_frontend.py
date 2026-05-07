@@ -200,6 +200,52 @@ def test_decode_range_loop_to_rumba_for_range():
     assert total(6) == 15
 
 
+@rumba.njit
+def _yield_range(n):
+    for i in range(n):
+        yield i
+
+
+@rumba.njit
+def _yield_from_range(n):
+    yield from range(n)
+
+
+def test_decode_generator_helper_loop_to_rumba_for_generator():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for value in _yield_range(n):
+            acc += value
+        return acc
+
+    summary = total.inspect_rumba_ast()
+    assert summary["body"] == ["Assign", "ForGenerator", "Return"]
+    assert total(6) == 15
+
+
+def test_generator_helper_call_outside_for_raises():
+    @rumba.njit
+    def use_generator(n):
+        values = _yield_range(n)
+        return 0
+
+    with pytest.raises(RumbaUnsupportedError, match="consumed directly by a for loop"):
+        use_generator(3)
+
+
+def test_yield_from_remains_unsupported():
+    @rumba.njit
+    def total(n):
+        acc = 0
+        for value in _yield_from_range(n):
+            acc += value
+        return acc
+
+    with pytest.raises(RumbaUnsupportedError, match="yield from is not supported"):
+        total(3)
+
+
 def test_range_start_stop_loop_executes():
     @rumba.njit
     def total(start, stop):

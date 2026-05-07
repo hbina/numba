@@ -18,6 +18,7 @@ pub(crate) struct DecodedCodeObject {
     pub(crate) names: Vec<String>,
     pub(crate) bytecode: Vec<u8>,
     pub(crate) instructions: Vec<BytecodeInstruction>,
+    pub(crate) is_generator: bool,
 }
 
 #[derive(Clone)]
@@ -57,6 +58,8 @@ pub(crate) enum Opcode {
     CompareOp,
     ReturnValue,
     ReturnConst,
+    ReturnGenerator,
+    YieldValue,
     PopJumpIfFalse,
     PopJumpIfTrue,
     JumpForward,
@@ -66,6 +69,9 @@ pub(crate) enum Opcode {
     ForIter,
     EndFor,
     PopTop,
+    CallIntrinsic1,
+    KwNames,
+    Reraise,
     Unsupported(u16),
 }
 
@@ -87,6 +93,10 @@ enum StackValue {
         attr: String,
     },
     CallRange(Vec<ExprNode>),
+    CallHelper {
+        function: Box<ParsedFunction>,
+        args: Vec<ExprNode>,
+    },
     InplaceBinOp {
         left: ExprNode,
         op: BinOp,
@@ -128,6 +138,7 @@ pub(crate) fn decode_function(func: &Bound<'_, PyAny>) -> PyResult<DecodedCodeOb
     let code = func.getattr("__code__")?;
     let name = code.getattr("co_name")?.extract()?;
     let argcount: usize = code.getattr("co_argcount")?.extract()?;
+    let flags: u32 = code.getattr("co_flags")?.extract()?;
     let varnames = extract_string_tuple(&code.getattr("co_varnames")?.downcast_into::<PyTuple>()?)?;
     let names = extract_string_tuple(&code.getattr("co_names")?.downcast_into::<PyTuple>()?)?;
     let consts = extract_consts(&code.getattr("co_consts")?.downcast_into::<PyTuple>()?)?;
@@ -154,6 +165,7 @@ pub(crate) fn decode_function(func: &Bound<'_, PyAny>) -> PyResult<DecodedCodeOb
         names,
         bytecode,
         instructions,
+        is_generator: flags & 0x20 != 0,
     })
 }
 
@@ -388,7 +400,25 @@ impl<'a> BytecodeParser<'a> {
                         }
                         StackValue::Name(name) => {
                             let target = self.resolve_global_call(&name)?;
-                            stack.push(StackValue::Expr(ExprNode::Call { target, args }));
+                            if let CallTarget::Helper {
+                                function,
+                                explicit_signature: None,
+                            } = target
+                            {
+                                if contains_yield(&function.body) {
+                                    stack.push(StackValue::CallHelper { function, args });
+                                } else {
+                                    stack.push(StackValue::Expr(ExprNode::Call {
+                                        target: CallTarget::Helper {
+                                            function,
+                                            explicit_signature: None,
+                                        },
+                                        args,
+                                    }));
+                                }
+                            } else {
+                                stack.push(StackValue::Expr(ExprNode::Call { target, args }));
+                            }
                         }
                         StackValue::Attr { owner, attr } => {
                             let intrinsic = self.resolve_module_intrinsic(&owner, &attr)?;
@@ -402,10 +432,7 @@ impl<'a> BytecodeParser<'a> {
                 }
                 Opcode::GetIter => {}
                 Opcode::ForIter => {
-                    let range_args = match pop_stack(&mut stack)? {
-                        StackValue::CallRange(args) => args,
-                        _ => return Err(unsupported("only range(...) loops are supported")),
-                    };
+                    let iter_value = pop_stack(&mut stack)?;
                     let target = self.jump_target(inst, true)?;
                     let store_index = index + 1;
                     if store_index >= end
@@ -427,14 +454,38 @@ impl<'a> BytecodeParser<'a> {
                     if consumed != jump_index {
                         return Err(unsupported("unsupported control flow in range loop"));
                     }
-                    let (start_expr, stop_expr, step_expr) = range_bounds(range_args)?;
-                    statements.push(StmtNode::ForRange {
-                        target: loop_var,
-                        start: start_expr,
-                        stop: stop_expr,
-                        step: step_expr,
-                        body,
-                    });
+                    match iter_value {
+                        StackValue::CallRange(range_args) => {
+                            let (start_expr, stop_expr, step_expr) = range_bounds(range_args)?;
+                            statements.push(StmtNode::ForRange {
+                                target: loop_var,
+                                start: start_expr,
+                                stop: stop_expr,
+                                step: step_expr,
+                                body,
+                            });
+                        }
+                        StackValue::CallHelper { function, args }
+                            if contains_yield(&function.body) =>
+                        {
+                            statements.push(StmtNode::ForGenerator {
+                                target: loop_var,
+                                function,
+                                args,
+                                body,
+                            });
+                        }
+                        StackValue::CallHelper { .. } => {
+                            return Err(unsupported(
+                                "for loops over helpers require a generator helper with yield",
+                            ));
+                        }
+                        _ => {
+                            return Err(unsupported(
+                                "only range(...) loops and direct generator helper loops are supported",
+                            ));
+                        }
+                    }
                     index = self.index_at_or_after(target)?;
                     if index < end && self.code.instructions[index].opcode == Opcode::EndFor {
                         index += 1;
@@ -583,9 +634,24 @@ impl<'a> BytecodeParser<'a> {
                     return Ok((statements, index + 1));
                 }
                 Opcode::ReturnConst => {
+                    if self.code.is_generator {
+                        let const_index = inst.arg.unwrap_or(0) as usize;
+                        if matches!(self.code.consts.get(const_index), Some(Constant::None)) {
+                            return Ok((statements, index + 1));
+                        }
+                    }
                     statements.push(StmtNode::Return(self.const_expr(inst)?));
                     return Ok((statements, index + 1));
                 }
+                Opcode::YieldValue => {
+                    statements.push(StmtNode::Yield(pop_expr(&mut stack)?));
+                }
+                Opcode::KwNames => {
+                    return Err(unsupported(
+                        "keyword calls are not supported; np.frombuffer v1 requires positional arguments",
+                    ));
+                }
+                Opcode::ReturnGenerator | Opcode::CallIntrinsic1 | Opcode::Reraise => {}
                 Opcode::JumpForward => {
                     if let Some(loop_context) = loop_context {
                         let target = self.jump_target(inst, true)?;
@@ -903,13 +969,10 @@ fn reject_unsupported_function_shape(func: &Bound<'_, PyAny>) -> PyResult<()> {
     if flags & 0x0c != 0 {
         return Err(unsupported("varargs and kwargs are not supported"));
     }
-    if flags & 0x20 != 0 {
-        return Err(unsupported("generators are not supported"));
-    }
     let exception_table = code
         .getattr("co_exceptiontable")?
         .downcast_into::<PyBytes>()?;
-    if !exception_table.as_bytes().is_empty() {
+    if flags & 0x20 == 0 && !exception_table.as_bytes().is_empty() {
         return Err(unsupported("exception handling is not supported"));
     }
     Ok(())
@@ -934,6 +997,9 @@ fn reject_unsupported_source_control_flow(func: &Bound<'_, PyAny>) -> PyResult<(
                 if !node.getattr("orelse")?.is_empty()? {
                     return Err(unsupported("while else is not supported"));
                 }
+            }
+            "YieldFrom" => {
+                return Err(unsupported("yield from is not supported"));
             }
             _ => {}
         }
@@ -1037,6 +1103,7 @@ fn opcode_from_raw(opcode: u16) -> Opcode {
         27 => Opcode::StoreSlice,
         60 => Opcode::StoreSubscr,
         68 => Opcode::GetIter,
+        75 => Opcode::ReturnGenerator,
         83 => Opcode::ReturnValue,
         93 => Opcode::ForIter,
         100 => Opcode::LoadConst,
@@ -1047,13 +1114,17 @@ fn opcode_from_raw(opcode: u16) -> Opcode {
         114 => Opcode::PopJumpIfFalse,
         115 => Opcode::PopJumpIfTrue,
         116 => Opcode::LoadGlobal,
+        119 => Opcode::Reraise,
         121 => Opcode::ReturnConst,
         122 => Opcode::BinaryOp,
         124 => Opcode::LoadFast,
         125 => Opcode::StoreFast,
         127 => Opcode::LoadFastCheck,
         134 | 140 => Opcode::JumpBackward,
+        150 => Opcode::YieldValue,
         171 => Opcode::Call,
+        172 => Opcode::KwNames,
+        173 => Opcode::CallIntrinsic1,
         other => Opcode::Unsupported(other),
     }
 }
@@ -1182,6 +1253,11 @@ fn pop_expr(stack: &mut Vec<StackValue>) -> PyResult<ExprNode> {
             op,
             right: Box::new(right),
         }),
+        StackValue::CallHelper { function, .. } if contains_yield(&function.body) => {
+            Err(unsupported(
+                "generator helpers are only supported when consumed directly by a for loop",
+            ))
+        }
         _ => Err(unsupported("expected scalar expression on bytecode stack")),
     }
 }
@@ -1208,6 +1284,11 @@ fn store_stmt(name: String, value: StackValue) -> PyResult<StmtNode> {
             })
         }
         StackValue::Expr(value) => Ok(StmtNode::Assign { name, value }),
+        StackValue::CallHelper { function, .. } if contains_yield(&function.body) => {
+            Err(unsupported(
+                "generator helpers are only supported when consumed directly by a for loop",
+            ))
+        }
         _ => Err(unsupported("unsupported store target bytecode")),
     }
 }
@@ -1238,6 +1319,18 @@ fn maybe_invert_test(test: ExprNode, opcode: Opcode) -> ExprNode {
     } else {
         test
     }
+}
+
+fn contains_yield(stmts: &[StmtNode]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        StmtNode::Yield(_) => true,
+        StmtNode::If { body, orelse, .. } => contains_yield(body) || contains_yield(orelse),
+        StmtNode::While { body, .. } | StmtNode::ForRange { body, .. } => contains_yield(body),
+        StmtNode::ForGenerator { body, function, .. } => {
+            contains_yield(body) || contains_yield(&function.body)
+        }
+        _ => false,
+    })
 }
 
 impl Constant {
@@ -1274,6 +1367,8 @@ impl Opcode {
             Opcode::CompareOp => "COMPARE_OP",
             Opcode::ReturnValue => "RETURN_VALUE",
             Opcode::ReturnConst => "RETURN_CONST",
+            Opcode::ReturnGenerator => "RETURN_GENERATOR",
+            Opcode::YieldValue => "YIELD_VALUE",
             Opcode::PopJumpIfFalse => "POP_JUMP_IF_FALSE",
             Opcode::PopJumpIfTrue => "POP_JUMP_IF_TRUE",
             Opcode::JumpForward => "JUMP_FORWARD",
@@ -1283,6 +1378,9 @@ impl Opcode {
             Opcode::ForIter => "FOR_ITER",
             Opcode::EndFor => "END_FOR",
             Opcode::PopTop => "POP_TOP",
+            Opcode::CallIntrinsic1 => "CALL_INTRINSIC_1",
+            Opcode::KwNames => "KW_NAMES",
+            Opcode::Reraise => "RERAISE",
             Opcode::Unsupported(_) => "UNSUPPORTED",
         }
     }
@@ -1300,6 +1398,7 @@ impl Opcode {
             self,
             Opcode::ReturnValue
                 | Opcode::ReturnConst
+                | Opcode::YieldValue
                 | Opcode::PopJumpIfFalse
                 | Opcode::PopJumpIfTrue
                 | Opcode::JumpForward

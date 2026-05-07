@@ -53,6 +53,11 @@ fn stmt_to_py(py: Python<'_>, stmt: &TypedStmt) -> PyResult<PyObject> {
             out.set_item("value_type", value.typ.name())?;
             out.set_item("value", expr_to_py(py, value)?)?;
         }
+        TypedStmt::Yield(value) => {
+            out.set_item("kind", "Yield")?;
+            out.set_item("value_type", value.typ.name())?;
+            out.set_item("value", expr_to_py(py, value)?)?;
+        }
         TypedStmt::Break => {
             out.set_item("kind", "Break")?;
         }
@@ -136,6 +141,20 @@ fn stmt_to_py(py: Python<'_>, stmt: &TypedStmt) -> PyResult<PyObject> {
             out.set_item("start", expr_to_py(py, start)?)?;
             out.set_item("stop", expr_to_py(py, stop)?)?;
             out.set_item("step", expr_to_py(py, step)?)?;
+            out.set_item("body", stmts_to_py(py, body)?)?;
+        }
+        TypedStmt::ForGenerator {
+            target,
+            function,
+            args,
+            body,
+        } => {
+            out.set_item("kind", "ForGenerator")?;
+            out.set_item("target", target)?;
+            out.set_item("target_type", function.yield_type.name())?;
+            out.set_item("reason", "generator_yield")?;
+            out.set_item("helper", &function.name)?;
+            out.set_item("args", exprs_to_py(py, args)?)?;
             out.set_item("body", stmts_to_py(py, body)?)?;
         }
     }

@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::errors::unsupported;
 use crate::intrinsics::IntrinsicId;
 use crate::ir::{BinOp, CallTarget, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp};
-use crate::types::{format_signature, FieldType, RumbaType, ScalarType, StructDtype};
+use crate::types::{format_signature, DtypeSpec, FieldType, RumbaType, ScalarType, StructDtype};
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypedFunction {
@@ -19,8 +19,19 @@ pub(crate) struct TypedFunction {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct TypedGeneratorFunction {
+    pub(crate) name: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) signature: Vec<RumbaType>,
+    pub(crate) body: Vec<TypedStmt>,
+    pub(crate) yield_type: ScalarType,
+    pub(crate) locals: HashMap<String, RumbaType>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) enum TypedStmt {
     Return(TypedExpr),
+    Yield(TypedExpr),
     Break,
     Continue,
     Assign {
@@ -63,6 +74,12 @@ pub(crate) enum TypedStmt {
         step: TypedExpr,
         body: Vec<TypedStmt>,
     },
+    ForGenerator {
+        target: String,
+        function: Box<TypedGeneratorFunction>,
+        args: Vec<TypedExpr>,
+        body: Vec<TypedStmt>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +91,7 @@ pub(crate) struct TypedExpr {
 #[derive(Clone, Debug)]
 pub(crate) enum TypedExprKind {
     Constant(ConstantValue),
+    Dtype(DtypeSpec),
     Name(String),
     Call {
         function: Box<TypedFunction>,
@@ -129,6 +147,10 @@ pub(crate) fn type_function(
         helper_cache: HashMap::new(),
         branch_only: HashSet::new(),
         loop_depth: 0,
+        in_generator: false,
+        yield_type: None,
+        generator_cache: HashMap::new(),
+        frombuffer_locals: HashSet::new(),
     };
 
     let typed_body = body
@@ -150,6 +172,53 @@ pub(crate) fn type_function(
     })
 }
 
+fn type_generator_function(
+    function_ir: ParsedFunction,
+    signature: Vec<RumbaType>,
+) -> PyResult<TypedGeneratorFunction> {
+    if function_ir.args.len() != signature.len() {
+        return Err(unsupported("argument count does not match signature"));
+    }
+
+    let ParsedFunction { name, args, body } = function_ir;
+    if !contains_yield(&body) {
+        return Err(unsupported("generator helper loops require yield"));
+    }
+    let env = args
+        .iter()
+        .cloned()
+        .zip(signature.iter().cloned())
+        .collect::<HashMap<_, _>>();
+    let mut pass = TypePass {
+        env,
+        return_type: None,
+        helper_cache: HashMap::new(),
+        branch_only: HashSet::new(),
+        loop_depth: 0,
+        in_generator: true,
+        yield_type: None,
+        generator_cache: HashMap::new(),
+        frombuffer_locals: HashSet::new(),
+    };
+
+    let typed_body = body
+        .iter()
+        .map(|stmt| pass.stmt(stmt))
+        .collect::<PyResult<Vec<_>>>()?;
+    let yield_type = pass
+        .yield_type
+        .ok_or_else(|| unsupported("generator helper must yield a scalar value"))?;
+
+    Ok(TypedGeneratorFunction {
+        name,
+        locals: local_types(&args, &pass.env),
+        args,
+        signature,
+        body: typed_body,
+        yield_type,
+    })
+}
+
 fn local_types(args: &[String], env: &HashMap<String, RumbaType>) -> HashMap<String, RumbaType> {
     env.iter()
         .filter(|(name, _)| !args.contains(name))
@@ -161,14 +230,23 @@ struct TypePass {
     env: HashMap<String, RumbaType>,
     return_type: Option<ScalarType>,
     helper_cache: HashMap<String, TypedFunction>,
+    generator_cache: HashMap<String, TypedGeneratorFunction>,
     branch_only: HashSet<String>,
+    frombuffer_locals: HashSet<String>,
     loop_depth: usize,
+    in_generator: bool,
+    yield_type: Option<ScalarType>,
 }
 
 impl TypePass {
     fn stmt(&mut self, node: &StmtNode) -> PyResult<TypedStmt> {
         match node {
             StmtNode::Return(value) => {
+                if self.in_generator {
+                    return Err(unsupported(
+                        "return values from generator helpers are not supported",
+                    ));
+                }
                 let expr = self.expr(value)?;
                 let expr_typ = expr
                     .typ
@@ -178,14 +256,32 @@ impl TypePass {
                     None => expr_typ,
                     Some(current) if current == expr_typ => current,
                     Some(current) => {
+                        return Err(exact_type_mismatch("return values", current, expr_typ));
+                    }
+                });
+                Ok(TypedStmt::Return(expr))
+            }
+            StmtNode::Yield(value) => {
+                if !self.in_generator {
+                    return Err(unsupported("yield is only supported in generator helpers consumed directly by for loops"));
+                }
+                let expr = self.expr(value)?;
+                let expr_typ = expr
+                    .typ
+                    .as_scalar()
+                    .ok_or_else(|| unsupported("generator yield values must be scalar"))?;
+                self.yield_type = Some(match self.yield_type {
+                    None => expr_typ,
+                    Some(current) if current == expr_typ => current,
+                    Some(current) => {
                         return Err(exact_type_mismatch(
-                            "return values",
+                            "generator yield values",
                             current,
                             expr_typ,
                         ));
                     }
                 });
-                Ok(TypedStmt::Return(expr))
+                Ok(TypedStmt::Yield(expr))
             }
             StmtNode::Break => {
                 if self.loop_depth == 0 {
@@ -258,7 +354,15 @@ impl TypePass {
                     RumbaType::Scalar(_) => {
                         return Err(unsupported("indexed assignment requires an array target"));
                     }
+                    RumbaType::ByteBuffer | RumbaType::Dtype(_) => {
+                        return Err(unsupported("indexed assignment requires an array target"));
+                    }
                 };
+                if self.is_frombuffer_view(&target) {
+                    return Err(unsupported(
+                        "assigning through np.frombuffer views is not supported",
+                    ));
+                }
                 if index.typ != RumbaType::Scalar(ScalarType::Int64) {
                     return Err(unsupported("array index must be an int64 scalar"));
                 }
@@ -289,6 +393,11 @@ impl TypePass {
                         ));
                     }
                 };
+                if self.is_frombuffer_view(&target) {
+                    return Err(unsupported(
+                        "assigning through np.frombuffer views is not supported",
+                    ));
+                }
                 if index.typ != RumbaType::Scalar(ScalarType::Int64) {
                     return Err(unsupported("struct array index must be an int64 scalar"));
                 }
@@ -329,24 +438,33 @@ impl TypePass {
                 self.env = env_before.clone();
                 self.branch_only = branch_only_before.clone();
                 self.return_type = return_type_before;
+                let yield_type_before = self.yield_type;
+                self.yield_type = yield_type_before;
                 let typed_body = body
                     .iter()
                     .map(|stmt| self.stmt(stmt))
                     .collect::<PyResult<Vec<_>>>()?;
                 let body_env = self.env.clone();
                 let body_return_type = self.return_type;
+                let body_yield_type = self.yield_type;
                 let body_helper_cache = self.helper_cache.clone();
+                let body_generator_cache = self.generator_cache.clone();
+                let body_frombuffer_locals = self.frombuffer_locals.clone();
 
                 self.env = env_before.clone();
                 self.branch_only = branch_only_before.clone();
                 self.return_type = return_type_before;
+                self.yield_type = yield_type_before;
                 let typed_orelse = orelse
                     .iter()
                     .map(|stmt| self.stmt(stmt))
                     .collect::<PyResult<Vec<_>>>()?;
                 let else_env = self.env.clone();
                 let else_return_type = self.return_type;
+                let else_yield_type = self.yield_type;
                 let else_helper_cache = self.helper_cache.clone();
+                let else_generator_cache = self.generator_cache.clone();
+                let else_frombuffer_locals = self.frombuffer_locals.clone();
 
                 self.env = merge_branch_envs(
                     &env_before,
@@ -368,8 +486,18 @@ impl TypePass {
                     return_type_before,
                     merge_return_types(body_return_type, else_return_type)?,
                 )?;
+                self.yield_type = merge_return_types(
+                    yield_type_before,
+                    merge_return_types(body_yield_type, else_yield_type)?,
+                )?;
                 self.helper_cache = body_helper_cache;
                 self.helper_cache.extend(else_helper_cache);
+                self.generator_cache = body_generator_cache;
+                self.generator_cache.extend(else_generator_cache);
+                self.frombuffer_locals = body_frombuffer_locals
+                    .intersection(&else_frombuffer_locals)
+                    .cloned()
+                    .collect();
 
                 Ok(TypedStmt::If {
                     test,
@@ -422,6 +550,45 @@ impl TypePass {
                     body,
                 })
             }
+            StmtNode::ForGenerator {
+                target,
+                function,
+                args,
+                body,
+            } => {
+                if !contains_yield(&function.body) {
+                    return Err(unsupported(
+                        "for loops over helpers require a generator helper with yield",
+                    ));
+                }
+                let args = args
+                    .iter()
+                    .map(|arg| self.expr(arg))
+                    .collect::<PyResult<Vec<_>>>()?;
+                let signature = args.iter().map(|arg| arg.typ.clone()).collect::<Vec<_>>();
+                let key = parsed_helper_key(function, &signature);
+                let function = if let Some(function) = self.generator_cache.get(&key) {
+                    function.clone()
+                } else {
+                    let function = type_generator_function((**function).clone(), signature)?;
+                    self.generator_cache.insert(key, function.clone());
+                    function
+                };
+                self.env
+                    .insert(target.to_string(), RumbaType::Scalar(function.yield_type));
+                self.loop_depth += 1;
+                let body = body
+                    .iter()
+                    .map(|stmt| self.stmt(stmt))
+                    .collect::<PyResult<Vec<_>>>()?;
+                self.loop_depth -= 1;
+                Ok(TypedStmt::ForGenerator {
+                    target: target.clone(),
+                    function: Box::new(function),
+                    args,
+                    body,
+                })
+            }
         }
     }
 
@@ -439,6 +606,10 @@ impl TypePass {
                         ));
                     }
                 },
+            }),
+            ExprNode::Dtype(dtype) => Ok(TypedExpr {
+                kind: TypedExprKind::Dtype(dtype.clone()),
+                typ: RumbaType::Dtype(dtype.clone()),
             }),
             ExprNode::Name(name) => {
                 let typ = self
@@ -469,6 +640,11 @@ impl TypePass {
                         function,
                         explicit_signature,
                     } => {
+                        if contains_yield(&function.body) {
+                            return Err(unsupported(
+                                "generator helpers are only supported when consumed directly by a for loop",
+                            ));
+                        }
                         let signature = args.iter().map(|arg| arg.typ.clone()).collect::<Vec<_>>();
                         if let Some(explicit_signature) = explicit_signature {
                             if explicit_signature != &signature {
@@ -517,7 +693,9 @@ impl TypePass {
                             "use a[i]['field'] syntax to read struct array fields",
                         ));
                     }
-                    RumbaType::Scalar(_) => return Err(unsupported("indexing requires an array")),
+                    RumbaType::Scalar(_) | RumbaType::ByteBuffer | RumbaType::Dtype(_) => {
+                        return Err(unsupported("indexing requires an array"));
+                    }
                 };
                 if index.typ != RumbaType::Scalar(ScalarType::Int64) {
                     return Err(unsupported("array index must be an int64 scalar"));
@@ -643,6 +821,23 @@ impl TypePass {
             }
         }
     }
+
+    fn is_frombuffer_view(&self, expr: &TypedExpr) -> bool {
+        if is_frombuffer_expr(expr) {
+            return true;
+        }
+        matches!(&expr.kind, TypedExprKind::Name(name) if self.frombuffer_locals.contains(name))
+    }
+}
+
+fn is_frombuffer_expr(expr: &TypedExpr) -> bool {
+    matches!(
+        expr.kind,
+        TypedExprKind::IntrinsicCall {
+            intrinsic: IntrinsicId::NumpyFromBuffer,
+            ..
+        }
+    )
 }
 
 fn merge_branch_envs(
@@ -855,9 +1050,21 @@ fn stmt_may_continue(stmt: &StmtNode) -> bool {
         StmtNode::If { body, orelse, .. } => {
             orelse.is_empty() || stmts_may_continue(body) || stmts_may_continue(orelse)
         }
-        StmtNode::While { .. } => true,
+        StmtNode::While { .. } | StmtNode::ForGenerator { .. } => true,
         _ => true,
     }
+}
+
+fn contains_yield(stmts: &[StmtNode]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        StmtNode::Yield(_) => true,
+        StmtNode::If { body, orelse, .. } => contains_yield(body) || contains_yield(orelse),
+        StmtNode::While { body, .. } | StmtNode::ForRange { body, .. } => contains_yield(body),
+        StmtNode::ForGenerator { body, function, .. } => {
+            contains_yield(body) || contains_yield(&function.body)
+        }
+        _ => false,
+    })
 }
 
 pub(crate) fn helper_key(function: &TypedFunction) -> String {

@@ -4,11 +4,17 @@ use pyo3::prelude::*;
 
 use crate::errors::unsupported;
 use crate::intrinsics::IntrinsicId;
-use crate::types::{RumbaType, ScalarType, StructDtype};
+use crate::types::{DtypeSpec, RumbaType, ScalarType, StructDtype};
 use crate::typing::{helper_key, TypedExpr, TypedExprKind, TypedFunction, TypedStmt};
 
 struct CExpr {
     code: String,
+}
+
+struct GeneratorInline<'a> {
+    names: &'a HashMap<String, String>,
+    consumer_target: &'a str,
+    consumer_body: &'a [TypedStmt],
 }
 
 pub(crate) struct Emitter {
@@ -115,6 +121,11 @@ impl Emitter {
                 let expr = self.expr(value)?;
                 self.lines
                     .push(format!("{}return {};", indent(level), expr.code));
+            }
+            TypedStmt::Yield(_) => {
+                return Err(unsupported(
+                    "yield is only supported inside generator helper loops",
+                ));
             }
             TypedStmt::Break => {
                 self.lines.push(format!("{}break;", indent(level)));
@@ -236,6 +247,219 @@ impl Emitter {
                 step,
                 body,
             } => self.for_range(target, start, stop, step, body, level)?,
+            TypedStmt::ForGenerator {
+                target,
+                function,
+                args,
+                body,
+            } => {
+                let prefix = format!("__rumba_gen{}_", self.helper_cache.len());
+                let mut names = HashMap::new();
+                for name in function.args.iter().chain(function.locals.keys()) {
+                    names.insert(name.clone(), format!("{prefix}{name}"));
+                }
+                self.lines.push(format!("{}{{", indent(level)));
+                for (name, arg) in function.args.iter().zip(args.iter()) {
+                    let c_name = names.get(name).expect("generator arg has renamed local");
+                    let expr = self.expr(arg)?;
+                    self.lines.push(format!(
+                        "{}{} {c_name} = {};",
+                        indent(level + 1),
+                        arg.typ.c_type(),
+                        expr.code
+                    ));
+                    self.declared.insert(c_name.clone());
+                }
+                let inline = GeneratorInline {
+                    names: &names,
+                    consumer_target: target,
+                    consumer_body: body,
+                };
+                for stmt in &function.body {
+                    self.generator_stmt(stmt, level + 1, &inline)?;
+                }
+                self.lines.push(format!("{}}}", indent(level)));
+            }
+        }
+        Ok(())
+    }
+
+    fn generator_stmt(
+        &mut self,
+        node: &TypedStmt,
+        level: usize,
+        inline: &GeneratorInline<'_>,
+    ) -> PyResult<()> {
+        match node {
+            TypedStmt::Yield(value) => {
+                let expr = self.expr_renamed(value, inline.names)?;
+                let prefix = if self.declared.contains(inline.consumer_target) {
+                    String::new()
+                } else {
+                    self.declared.insert(inline.consumer_target.to_string());
+                    format!("{} ", value.typ.c_type())
+                };
+                self.lines.push(format!(
+                    "{}{prefix}{} = {};",
+                    indent(level),
+                    inline.consumer_target,
+                    expr.code
+                ));
+                for stmt in inline.consumer_body {
+                    self.stmt(stmt, level)?;
+                }
+            }
+            TypedStmt::Return(_) => {
+                return Err(unsupported(
+                    "return values from generator helpers are not supported",
+                ));
+            }
+            TypedStmt::Break => self.lines.push(format!("{}break;", indent(level))),
+            TypedStmt::Continue => self.lines.push(format!("{}continue;", indent(level))),
+            TypedStmt::Assign { name, value } => {
+                let expr = self.expr_renamed(value, inline.names)?;
+                let name = inline.names.get(name).map(String::as_str).unwrap_or(name);
+                let prefix = if self.declared.contains(name) {
+                    String::new()
+                } else {
+                    self.declared.insert(name.to_string());
+                    format!("{} ", value.typ.c_type())
+                };
+                self.lines
+                    .push(format!("{}{prefix}{name} = {};", indent(level), expr.code));
+            }
+            TypedStmt::AugAssign {
+                name, op, value, ..
+            } => {
+                let expr = self.expr_renamed(value, inline.names)?;
+                let name = inline.names.get(name).map(String::as_str).unwrap_or(name);
+                self.lines.push(format!(
+                    "{}{name} {}= {};",
+                    indent(level),
+                    op.symbol(),
+                    expr.code
+                ));
+            }
+            TypedStmt::StoreIndex {
+                target,
+                index,
+                value,
+                element_type,
+            } => {
+                let target = self.expr_renamed(target, inline.names)?;
+                let index = self.expr_renamed(index, inline.names)?;
+                let value_type = value
+                    .typ
+                    .as_scalar()
+                    .expect("typed scalar array assignment");
+                let value = self.expr_renamed(value, inline.names)?;
+                let rhs = if value_type == *element_type {
+                    value.code
+                } else {
+                    format!("({})({})", element_type.c_type(), value.code)
+                };
+                self.lines.push(format!(
+                    "{}{}.data[{}] = {};",
+                    indent(level),
+                    target.code,
+                    index.code,
+                    rhs
+                ));
+            }
+            TypedStmt::StoreIndexField {
+                target,
+                index,
+                field,
+                value,
+                field_type,
+                ..
+            } => {
+                let target = self.expr_renamed(target, inline.names)?;
+                let index = self.expr_renamed(index, inline.names)?;
+                let value_type = value
+                    .typ
+                    .as_scalar()
+                    .expect("typed scalar struct field assignment");
+                let value = self.expr_renamed(value, inline.names)?;
+                let rhs = if value_type.c_type() == field_type.c_type() {
+                    value.code
+                } else {
+                    format!("({})({})", field_type.c_type(), value.code)
+                };
+                self.lines.push(format!(
+                    "{}{}.data[{}].{} = {};",
+                    indent(level),
+                    target.code,
+                    index.code,
+                    field,
+                    rhs
+                ));
+            }
+            TypedStmt::If { test, body, orelse } => {
+                let test = self.expr_renamed(test, inline.names)?;
+                self.lines
+                    .push(format!("{}if ({}) {{", indent(level), test.code));
+                for child in body {
+                    self.generator_stmt(child, level + 1, inline)?;
+                }
+                if !orelse.is_empty() {
+                    self.lines.push(format!("{}}} else {{", indent(level)));
+                    for child in orelse {
+                        self.generator_stmt(child, level + 1, inline)?;
+                    }
+                }
+                self.lines.push(format!("{}}}", indent(level)));
+            }
+            TypedStmt::While { test, body } => {
+                let test = self.expr_renamed(test, inline.names)?;
+                self.lines
+                    .push(format!("{}while ({}) {{", indent(level), test.code));
+                for child in body {
+                    self.generator_stmt(child, level + 1, inline)?;
+                }
+                self.lines.push(format!("{}}}", indent(level)));
+            }
+            TypedStmt::ForRange {
+                target,
+                start,
+                stop,
+                step,
+                body,
+            } => {
+                let start = self.expr_renamed(start, inline.names)?;
+                let stop = self.expr_renamed(stop, inline.names)?;
+                let step = self.expr_renamed(step, inline.names)?;
+                let name = inline
+                    .names
+                    .get(target)
+                    .map(String::as_str)
+                    .unwrap_or(target);
+                let decl = if self.declared.contains(name) {
+                    String::new()
+                } else {
+                    self.declared.insert(name.to_string());
+                    "int64_t ".to_string()
+                };
+                let cmp = format!(
+                    "(({}) > 0 ? {name} < {} : {name} > {})",
+                    step.code, stop.code, stop.code
+                );
+                self.lines.push(format!(
+                    "{}for ({decl}{name} = {}; {cmp}; {name} += {}) {{",
+                    indent(level),
+                    start.code,
+                    step.code
+                ));
+                for child in body {
+                    self.generator_stmt(child, level + 1, inline)?;
+                }
+                self.lines.push(format!("{}}}", indent(level)));
+            }
+            TypedStmt::ForGenerator { .. } => {
+                return Err(unsupported(
+                    "nested generator helper loops are not supported",
+                ));
+            }
         }
         Ok(())
     }
@@ -362,6 +586,14 @@ impl Emitter {
                 })
             }
         }
+    }
+
+    fn expr_renamed(
+        &mut self,
+        node: &TypedExpr,
+        names: &HashMap<String, String>,
+    ) -> PyResult<CExpr> {
+        self.expr(&rename_expr(node, names))
     }
 
     fn intrinsic_expr(
@@ -511,6 +743,57 @@ fn collect_struct_dtypes(function: &TypedFunction) -> Vec<StructDtype> {
     out
 }
 
+fn rename_expr(expr: &TypedExpr, names: &HashMap<String, String>) -> TypedExpr {
+    let kind = match &expr.kind {
+        TypedExprKind::Name(name) => {
+            TypedExprKind::Name(names.get(name).cloned().unwrap_or_else(|| name.clone()))
+        }
+        TypedExprKind::Dtype(dtype) => TypedExprKind::Dtype(dtype.clone()),
+        TypedExprKind::Call { function, args } => TypedExprKind::Call {
+            function: function.clone(),
+            args: args.iter().map(|arg| rename_expr(arg, names)).collect(),
+        },
+        TypedExprKind::IntrinsicCall { intrinsic, args } => TypedExprKind::IntrinsicCall {
+            intrinsic: *intrinsic,
+            args: args.iter().map(|arg| rename_expr(arg, names)).collect(),
+        },
+        TypedExprKind::Index { target, index } => TypedExprKind::Index {
+            target: Box::new(rename_expr(target, names)),
+            index: Box::new(rename_expr(index, names)),
+        },
+        TypedExprKind::IndexField {
+            target,
+            index,
+            field,
+            field_type,
+        } => TypedExprKind::IndexField {
+            target: Box::new(rename_expr(target, names)),
+            index: Box::new(rename_expr(index, names)),
+            field: field.clone(),
+            field_type: *field_type,
+        },
+        TypedExprKind::BinOp { left, op, right } => TypedExprKind::BinOp {
+            left: Box::new(rename_expr(left, names)),
+            op: *op,
+            right: Box::new(rename_expr(right, names)),
+        },
+        TypedExprKind::UnaryOp { op, value } => TypedExprKind::UnaryOp {
+            op: op.clone(),
+            value: Box::new(rename_expr(value, names)),
+        },
+        TypedExprKind::Compare { left, op, right } => TypedExprKind::Compare {
+            left: Box::new(rename_expr(left, names)),
+            op: op.clone(),
+            right: Box::new(rename_expr(right, names)),
+        },
+        TypedExprKind::Constant(value) => TypedExprKind::Constant(value.clone()),
+    };
+    TypedExpr {
+        kind,
+        typ: expr.typ.clone(),
+    }
+}
+
 fn collect_struct_dtypes_from_function(function: &TypedFunction, out: &mut Vec<StructDtype>) {
     for typ in function.signature.iter().chain(function.locals.values()) {
         collect_struct_dtype_from_type(typ, out);
@@ -522,7 +805,7 @@ fn collect_struct_dtypes_from_function(function: &TypedFunction, out: &mut Vec<S
 
 fn collect_struct_dtypes_from_stmt(stmt: &TypedStmt, out: &mut Vec<StructDtype>) {
     match stmt {
-        TypedStmt::Return(value) | TypedStmt::Assign { value, .. } => {
+        TypedStmt::Return(value) | TypedStmt::Yield(value) | TypedStmt::Assign { value, .. } => {
             collect_struct_dtypes_from_expr(value, out);
         }
         TypedStmt::Break | TypedStmt::Continue => {}
@@ -580,6 +863,25 @@ fn collect_struct_dtypes_from_stmt(stmt: &TypedStmt, out: &mut Vec<StructDtype>)
                 collect_struct_dtypes_from_stmt(stmt, out);
             }
         }
+        TypedStmt::ForGenerator {
+            function,
+            args,
+            body,
+            ..
+        } => {
+            for typ in function.signature.iter().chain(function.locals.values()) {
+                collect_struct_dtype_from_type(typ, out);
+            }
+            for stmt in &function.body {
+                collect_struct_dtypes_from_stmt(stmt, out);
+            }
+            for arg in args {
+                collect_struct_dtypes_from_expr(arg, out);
+            }
+            for stmt in body {
+                collect_struct_dtypes_from_stmt(stmt, out);
+            }
+        }
     }
 }
 
@@ -607,7 +909,7 @@ fn collect_struct_dtypes_from_expr(expr: &TypedExpr, out: &mut Vec<StructDtype>)
             collect_struct_dtypes_from_expr(right, out);
         }
         TypedExprKind::UnaryOp { value, .. } => collect_struct_dtypes_from_expr(value, out),
-        TypedExprKind::Constant(_) | TypedExprKind::Name(_) => {}
+        TypedExprKind::Constant(_) | TypedExprKind::Dtype(_) | TypedExprKind::Name(_) => {}
     }
 }
 
