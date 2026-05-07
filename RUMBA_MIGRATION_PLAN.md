@@ -14,8 +14,8 @@ The long-term ownership model is Rust-first:
 
 - Rust owns the public extension module through PyO3.
 - Rust owns dispatcher state, signature specialization, bytecode decoding,
-  Rumba AST construction, type inference, lowering, code generation, cache
-  metadata, compiler invocation, diagnostics, and runtime ABI handling.
+  Rumba AST construction, type inference, lowering, code generation,
+  compiler invocation, diagnostics, and runtime ABI handling.
 - There are no Python implementation files under `rumba/python/rumba`.
 - Python remains only the consumer language and the language used by public API
   tests. Optional examples should live in documentation snippets rather than
@@ -51,14 +51,14 @@ model.
 - Added Rust-owned `rumba.__version__`, `rumba.njit`, and `rumba.jit`.
 - Added a PyO3 dispatcher object with `.py_func`, `.signatures`, `_compiled`,
   `.inspect_bytecode()`, `.inspect_rumba_ast()`, `.inspect_c()`,
-  `.inspect_compile_command()`, and `.inspect_cache_path()`.
+  and `.inspect_compile_command()`.
 - Added lazy compile-on-first-call for observed signatures.
 - Added a Rust bytecode frontend for the currently supported Python 3.12
   scalar and 1D array subset.
 - Added a dedicated Rust typing pass that feeds C emission.
-- Moved scalar and 1D array type handling, C emission, cache key creation,
-  generated-source writing, C compiler discovery, C compiler invocation, and
-  shared-library artifact metadata into Rust.
+- Moved scalar and 1D array type handling, C emission, generated-source
+  writing, C compiler discovery, C compiler invocation, and shared-library
+  artifact metadata into Rust.
 - Moved decorator ergonomics, argument type discovery, exception types, compiled
   library loading, and native invocation into Rust.
 - Removed `rumba/python/rumba`; no Python files implement the package.
@@ -100,7 +100,7 @@ compiler/runtime exposed to Python.
 The following pieces are now Rust-owned in the initial slice:
 
 - Argument type discovery and signature construction.
-- Dispatcher object and specialization cache.
+- Dispatcher object and in-process specialization table.
 - Public exception classes.
 - Bytecode decoding and Rumba AST construction for the currently supported
   subset.
@@ -108,7 +108,7 @@ The following pieces are now Rust-owned in the initial slice:
   current scalar and 1D array subset.
 - ABI conversion and native invocation for the currently supported scalar and
   1D array signatures.
-- Cache key generation and shared-library compilation.
+- Generated-source writing and shared-library compilation.
 
 The following pieces still need deeper Rust implementations:
 
@@ -116,7 +116,6 @@ The following pieces still need deeper Rust implementations:
 - Full typed AST inspection/debug representations.
 - Broader ABI argument conversion beyond the current scalar and 1D array view
   subset.
-- Cache metadata serialization and invalidation.
 
 ## Public API
 
@@ -128,9 +127,12 @@ Initial public API:
 
 Supported options for now:
 
-- `cache=False`
 - `debug=False`
 - `signature=None`
+
+Persistent on-disk caching is intentionally out of scope. `cache=True` and
+other cache-related decorator options must raise `RumbaUnsupportedError`
+instead of being silently accepted.
 
 Unsupported Numba options must raise `RumbaUnsupportedError` instead of being
 silently accepted or falling back to Python.
@@ -187,8 +189,8 @@ an alias. The dispatcher class is a PyO3 `#[pyclass]`.
 
 Status: Implemented.
 
-Rust now owns scalar C source generation, cache key creation, generated-source
-writing, C compiler selection, C compiler invocation, artifact metadata, and a
+Rust now owns scalar C source generation, generated-source writing, C compiler
+selection, C compiler invocation, artifact metadata, and a
 dedicated typing pass feeding C emission.
 
 Remaining work:
@@ -228,14 +230,14 @@ Required capabilities:
 - Discover argument types in Rust. Implemented for scalars and 1D contiguous
   `int64`/`float64` NumPy arrays.
 - Compile lazily on first call for an observed signature. Implemented.
-- Cache compiled artifacts by bytecode hash, constants, closure-free globals
-  used, signature, Python version, Rumba version, target platform, and compiler
-  flags. Partial.
+- Keep compiled artifacts in the dispatcher's in-process specialization table
+  for the lifetime of the dispatcher. Implemented for the current signature
+  slice.
 - Invoke compiled functions from Rust instead of Python `ctypes`. Implemented
   through the generated native wrapper ABI for the current scalar and 1D array
   ABI combinations.
 - Preserve inspection helpers for bytecode, Rumba AST, generated C, compiler
-  command, and cache path. Implemented except typed AST.
+  command, and artifact path. Implemented except typed AST.
 
 Runtime invocation now uses a generated native wrapper ABI for the current
 signature slice. Rust/PyO3 remains responsible for strict argument validation
@@ -349,14 +351,14 @@ Python:
 
 - Package tests for import, version, decorator forms, and unsupported options.
 - Rust unit tests for bytecode decoding, Rumba AST construction, type inference,
-  C generation, cache keys, and compiler command construction.
+  C generation, artifact naming, and compiler command construction.
 - Frontend tests for simple arithmetic, branches, loops, `range`, `len`, and
   array indexing.
 - Focused Python syntax tests for nested `if` / `else`, `elif`, one-, two-, and
   three-argument `range`, `while`, `break`, `continue`, scalar arithmetic,
   comparisons, boolean conditions, unary operators, local assignment, augmented
   assignment, and supported jitted-only helper calls.
-- Execution tests for scalar arithmetic, branches, loops, cache reuse, and
+- Execution tests for scalar arithmetic, branches, loops, specialization reuse, and
   distinct signatures.
 - NumPy tests for 1D array reads/writes, dtype mismatch, non-contiguous arrays,
   unsupported dimensions, and unsupported returns.
@@ -370,9 +372,9 @@ Python:
 | ---- | ------ |
 | 2026-04-26 | Initial migration plan created. |
 | 2026-04-26 | Added independent `rumba/` package scaffold and first scalar C/ctypes execution slice. |
-| 2026-04-27 | Moved scalar C generation, cache key generation, generated source writing, compiler discovery, compiler invocation, and artifact metadata into Rust. |
+| 2026-04-27 | Moved scalar C generation, generated source writing, compiler discovery, compiler invocation, and artifact metadata into Rust. |
 | 2026-04-27 | Updated project direction: Rumba is a Rust compiler/runtime with Python only as a thin package boundary and temporary glue. |
 | 2026-04-27 | Removed the Python package implementation and made `rumba` a top-level Rust/PyO3 extension module. |
 | 2026-04-27 | Removed the Python package implementation files; Python remains limited to public API tests and optional examples. |
-| 2026-04-28 | Added dedicated Rust typing pass, compiler/cache inspection helpers, Python 3.12 bytecode frontend coverage for the current subset, and initial 1D NumPy array interop. |
+| 2026-04-28 | Added dedicated Rust typing pass, compiler/artifact inspection helpers, Python 3.12 bytecode frontend coverage for the current subset, and initial 1D NumPy array interop. |
 | 2026-05-02 | Added explicit native intrinsic resolution, typing, inspection, and C lowering for selected builtins, `math` calls, and 1D NumPy reductions while preserving rejection of arbitrary Python helpers. |
