@@ -12,6 +12,20 @@ PCAP_HEADER_DTYPE = np.dtype(
         ("orig_len", np.uint32),
     ]
 )
+PACKET_VIEW_DTYPE = np.dtype(
+    [
+        ("captured_len", np.uint32),
+        ("total_length", np.uint32),
+        ("seq", np.uint64),
+    ]
+)
+ALT_PACKET_VIEW_DTYPE = np.dtype(
+    [
+        ("captured_len", np.uint32),
+        ("total_length", np.uint32),
+        ("flags", np.uint64),
+    ]
+)
 INT64_DTYPE = np.dtype("int64")
 UNALIGNED_HEADER_DTYPE = np.dtype(
     {
@@ -31,6 +45,54 @@ def _first(a):
 @rumba.njit
 def _yield_array(a):
     yield a
+
+
+@rumba.njit
+def _yield_array_alias(a):
+    values = a
+    yield values
+
+
+@rumba.njit
+def _yield_packet_views_named(buf, limit):
+    offset = 0
+    while offset < limit:
+        packet = np.frombuffer(buf, PACKET_VIEW_DTYPE, 1, offset)
+        yield packet
+        offset += packet[0]["total_length"]
+
+
+@rumba.njit
+def _yield_packet_views_direct(buf, limit):
+    offset = 0
+    while offset < limit:
+        yield np.frombuffer(buf, PACKET_VIEW_DTYPE, 1, offset)
+        offset += 16
+
+
+@rumba.njit
+def _yield_int64_views(buf, limit):
+    offset = 0
+    while offset < limit:
+        yield np.frombuffer(buf, INT64_DTYPE, 1, offset)
+        offset += 8
+
+
+@rumba.njit
+def _yield_scalar_then_view(buf):
+    yield 1
+    yield np.frombuffer(buf, INT64_DTYPE, 1, 0)
+
+
+@rumba.njit
+def _yield_mixed_struct_views(buf):
+    yield np.frombuffer(buf, PACKET_VIEW_DTYPE, 1, 0)
+    yield np.frombuffer(buf, ALT_PACKET_VIEW_DTYPE, 1, 0)
+
+
+@rumba.njit
+def _yield_bad_int64_view(buf):
+    yield np.frombuffer(buf, INT64_DTYPE, 1, 8)
 
 
 def test_sum_int64_array_with_len_and_indexing():
@@ -56,7 +118,20 @@ def test_generator_yielding_array_is_rejected():
         return acc
 
     values = np.arange(3, dtype=np.int64)
-    with pytest.raises(RumbaUnsupportedError, match="generator yield values must be scalar"):
+    with pytest.raises(RumbaUnsupportedError, match="np.frombuffer views"):
+        total(values)
+
+
+def test_generator_yielding_non_frombuffer_array_local_is_rejected():
+    @rumba.njit
+    def total(a):
+        acc = 0
+        for value in _yield_array_alias(a):
+            acc += len(value)
+        return acc
+
+    values = np.arange(3, dtype=np.int64)
+    with pytest.raises(RumbaUnsupportedError, match="np.frombuffer views"):
         total(values)
 
 
@@ -577,6 +652,101 @@ def test_numpy_frombuffer_dynamic_offsets_parse_multiple_records():
 
     assert incl_len_at(buf, 0) == 64
     assert incl_len_at(buf, 1) == 256
+
+
+def test_generator_yields_named_structured_frombuffer_views_to_loop():
+    @rumba.njit
+    def captured_total(buf, limit):
+        total = 0
+        for packet in _yield_packet_views_named(buf, limit):
+            total += packet[0]["captured_len"]
+        return total
+
+    records = np.array([(64, 16, 1), (128, 16, 2), (256, 16, 3)], dtype=PACKET_VIEW_DTYPE)
+    buf = records.view(np.uint8)
+
+    assert captured_total(buf, len(buf)) == 448
+    typed = captured_total.inspect_typed_ast()
+    assert typed["body"][1]["kind"] == "ForGenerator"
+    assert (
+        typed["body"][1]["target_type"]
+        == "array(struct{captured_len:u32,total_length:u32,seq:u64}, 1d, C)"
+    )
+
+
+def test_generator_yields_direct_structured_frombuffer_views_to_loop():
+    @rumba.njit
+    def seq_total(buf, limit):
+        total = 0
+        for packet in _yield_packet_views_direct(buf, limit):
+            total += packet[0]["seq"]
+        return total
+
+    records = np.array([(64, 16, 1), (128, 16, 2), (256, 16, 3)], dtype=PACKET_VIEW_DTYPE)
+    buf = records.view(np.uint8)
+
+    assert seq_total(buf, len(buf)) == 6
+
+
+def test_generator_yields_scalar_frombuffer_views_to_loop():
+    @rumba.njit
+    def value_total(buf, limit):
+        total = 0
+        for values in _yield_int64_views(buf, limit):
+            total += values[0]
+        return total
+
+    values = np.array([10, 20, 30], dtype=np.int64)
+    buf = values.view(np.uint8)
+
+    assert value_total(buf, len(buf)) == 60
+    typed = value_total.inspect_typed_ast()
+    assert typed["body"][1]["target_type"] == "array(int64, 1d, C)"
+
+
+def test_generator_mixed_scalar_and_frombuffer_view_yields_raise():
+    @rumba.njit
+    def total(buf):
+        acc = 0
+        for value in _yield_scalar_then_view(buf):
+            acc += len(value)
+        return acc
+
+    buf = np.zeros(8, dtype=np.uint8)
+
+    with pytest.raises(RumbaUnsupportedError, match="generator yield values require exact matching"):
+        total(buf)
+
+
+def test_generator_mixed_structured_frombuffer_view_yields_raise():
+    @rumba.njit
+    def total(buf):
+        acc = 0
+        for packet in _yield_mixed_struct_views(buf):
+            acc += packet[0]["captured_len"]
+        return acc
+
+    buf = np.zeros(16, dtype=np.uint8)
+
+    with pytest.raises(RumbaUnsupportedError, match="generator yield values require exact matching"):
+        total(buf)
+
+
+def test_generator_frombuffer_runtime_error_skips_consumer_body():
+    @rumba.njit
+    def consume_bad_view(buf, marker):
+        total = 0
+        for values in _yield_bad_int64_view(buf):
+            marker[0] = 1
+            total += values[0]
+        return total
+
+    buf = np.zeros(8, dtype=np.uint8)
+    marker = np.zeros(1, dtype=np.int64)
+
+    with pytest.raises(RumbaUnsupportedError, match="offset/count"):
+        consume_bad_view(buf, marker)
+    assert marker[0] == 0
 
 
 def test_numpy_frombuffer_inspects_as_intrinsic_and_pointer_cast_view():

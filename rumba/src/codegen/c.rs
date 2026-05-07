@@ -319,6 +319,13 @@ impl Emitter {
                     inline.consumer_target,
                     expr.code
                 ));
+                if is_frombuffer_expr(value) {
+                    self.lines.push(format!(
+                        "{}if (rumba_runtime_error != 0) {{ return {}; }}",
+                        indent(level),
+                        self.default_return_literal()
+                    ));
+                }
                 for stmt in inline.consumer_body {
                     self.stmt(stmt, level)?;
                 }
@@ -342,6 +349,13 @@ impl Emitter {
                 };
                 self.lines
                     .push(format!("{}{prefix}{name} = {};", indent(level), expr.code));
+                if is_frombuffer_expr(value) {
+                    self.lines.push(format!(
+                        "{}if (rumba_runtime_error != 0) {{ return {}; }}",
+                        indent(level),
+                        self.default_return_literal()
+                    ));
+                }
             }
             TypedStmt::AugAssign {
                 name, op, value, ..

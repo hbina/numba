@@ -24,7 +24,7 @@ pub(crate) struct TypedGeneratorFunction {
     pub(crate) args: Vec<String>,
     pub(crate) signature: Vec<RumbaType>,
     pub(crate) body: Vec<TypedStmt>,
-    pub(crate) yield_type: ScalarType,
+    pub(crate) yield_type: RumbaType,
     pub(crate) locals: HashMap<String, RumbaType>,
 }
 
@@ -214,7 +214,7 @@ fn type_generator_function(
         .collect::<PyResult<Vec<_>>>()?;
     let yield_type = pass
         .yield_type
-        .ok_or_else(|| unsupported("generator helper must yield a scalar value"))?;
+        .ok_or_else(|| unsupported("generator helper must yield a value"))?;
 
     Ok(TypedGeneratorFunction {
         name,
@@ -242,7 +242,7 @@ struct TypePass {
     frombuffer_locals: HashSet<String>,
     loop_depth: usize,
     in_generator: bool,
-    yield_type: Option<ScalarType>,
+    yield_type: Option<RumbaType>,
 }
 
 impl TypePass {
@@ -273,18 +273,19 @@ impl TypePass {
                     return Err(unsupported("yield is only supported in generator helpers consumed directly by for loops"));
                 }
                 let expr = self.expr(value)?;
-                let expr_typ = expr
-                    .typ
-                    .as_scalar()
-                    .ok_or_else(|| unsupported("generator yield values must be scalar"))?;
-                self.yield_type = Some(match self.yield_type {
-                    None => expr_typ,
-                    Some(current) if current == expr_typ => current,
+                if expr.typ.as_scalar().is_none() && !self.is_frombuffer_view(&expr) {
+                    return Err(unsupported(
+                        "generator array yields are only supported for np.frombuffer views",
+                    ));
+                }
+                self.yield_type = Some(match &self.yield_type {
+                    None => expr.typ.clone(),
+                    Some(current) if current == &expr.typ => current.clone(),
                     Some(current) => {
-                        return Err(exact_type_mismatch(
+                        return Err(exact_rumba_type_mismatch(
                             "generator yield values",
                             current,
-                            expr_typ,
+                            &expr.typ,
                         ));
                     }
                 });
@@ -455,15 +456,15 @@ impl TypePass {
                 self.env = env_before.clone();
                 self.branch_only = branch_only_before.clone();
                 self.return_type = return_type_before;
-                let yield_type_before = self.yield_type;
-                self.yield_type = yield_type_before;
+                let yield_type_before = self.yield_type.clone();
+                self.yield_type = yield_type_before.clone();
                 let typed_body = body
                     .iter()
                     .map(|stmt| self.stmt(stmt))
                     .collect::<PyResult<Vec<_>>>()?;
                 let body_env = self.env.clone();
                 let body_return_type = self.return_type;
-                let body_yield_type = self.yield_type;
+                let body_yield_type = self.yield_type.clone();
                 let body_helper_cache = self.helper_cache.clone();
                 let body_generator_cache = self.generator_cache.clone();
                 let body_frombuffer_locals = self.frombuffer_locals.clone();
@@ -471,14 +472,14 @@ impl TypePass {
                 self.env = env_before.clone();
                 self.branch_only = branch_only_before.clone();
                 self.return_type = return_type_before;
-                self.yield_type = yield_type_before;
+                self.yield_type = yield_type_before.clone();
                 let typed_orelse = orelse
                     .iter()
                     .map(|stmt| self.stmt(stmt))
                     .collect::<PyResult<Vec<_>>>()?;
                 let else_env = self.env.clone();
                 let else_return_type = self.return_type;
-                let else_yield_type = self.yield_type;
+                let else_yield_type = self.yield_type.clone();
                 let else_helper_cache = self.helper_cache.clone();
                 let else_generator_cache = self.generator_cache.clone();
                 let else_frombuffer_locals = self.frombuffer_locals.clone();
@@ -503,9 +504,9 @@ impl TypePass {
                     return_type_before,
                     merge_return_types(body_return_type, else_return_type)?,
                 )?;
-                self.yield_type = merge_return_types(
+                self.yield_type = merge_yield_types(
                     yield_type_before,
-                    merge_return_types(body_yield_type, else_yield_type)?,
+                    merge_yield_types(body_yield_type, else_yield_type)?,
                 )?;
                 self.helper_cache = body_helper_cache;
                 self.helper_cache.extend(else_helper_cache);
@@ -592,7 +593,7 @@ impl TypePass {
                     function
                 };
                 self.env
-                    .insert(target.to_string(), RumbaType::Scalar(function.yield_type));
+                    .insert(target.to_string(), function.yield_type.clone());
                 self.loop_depth += 1;
                 let body = body
                     .iter()
@@ -992,6 +993,22 @@ fn merge_return_types(
     }
 }
 
+fn merge_yield_types(
+    left: Option<RumbaType>,
+    right: Option<RumbaType>,
+) -> PyResult<Option<RumbaType>> {
+    match (left, right) {
+        (None, None) => Ok(None),
+        (Some(typ), None) | (None, Some(typ)) => Ok(Some(typ)),
+        (Some(left), Some(right)) if left == right => Ok(Some(left)),
+        (Some(left), Some(right)) => Err(exact_rumba_type_mismatch(
+            "generator yield values",
+            &left,
+            &right,
+        )),
+    }
+}
+
 fn type_binary_op(left: ScalarType, op: BinOp, right: ScalarType) -> PyResult<ScalarType> {
     if left != right {
         return Err(exact_type_mismatch(op.type_name(), left, right));
@@ -1033,6 +1050,14 @@ fn type_compare(left: ScalarType, op: &crate::ir::CmpOp, right: ScalarType) -> P
 fn exact_type_mismatch(context: &str, left: ScalarType, right: ScalarType) -> pyo3::PyErr {
     unsupported(format!(
         "{context} require exact matching scalar types, got {} and {}; use an explicit cast",
+        left.name(),
+        right.name()
+    ))
+}
+
+fn exact_rumba_type_mismatch(context: &str, left: &RumbaType, right: &RumbaType) -> pyo3::PyErr {
+    unsupported(format!(
+        "{context} require exact matching types, got {} and {}; use an explicit cast",
         left.name(),
         right.name()
     ))

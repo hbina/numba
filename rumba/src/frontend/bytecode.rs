@@ -525,7 +525,9 @@ impl<'a> BytecodeParser<'a> {
                             body,
                         });
                         index = target_index;
-                        if jump_index + 1 != target_index {
+                        if jump_index + 1 != target_index
+                            && !self.only_generator_none_returns(jump_index + 1, target_index)
+                        {
                             return Err(unsupported("unsupported while loop control flow"));
                         }
                         continue;
@@ -888,20 +890,28 @@ impl<'a> BytecodeParser<'a> {
         if body_start >= target_index || target_index < 2 {
             return Ok(None);
         }
-        let jump_index = target_index - 1;
+        let loop_exit_index = if self.code.is_generator
+            && target_index >= 3
+            && self.is_return_const_none(target_index - 1)
+        {
+            target_index - 1
+        } else {
+            target_index
+        };
+        let jump_index = loop_exit_index - 1;
         let jump = &self.code.instructions[jump_index];
         if jump.opcode != Opcode::JumpBackward
             || self.jump_target(jump, false)? != self.code.instructions[body_start].offset
         {
             return Ok(None);
         }
-        let condition_jump_index = target_index - 2;
+        let condition_jump_index = loop_exit_index - 2;
         let condition_jump = &self.code.instructions[condition_jump_index];
         if !matches!(
             condition_jump.opcode,
             Opcode::PopJumpIfFalse | Opcode::PopJumpIfTrue
         ) || self.jump_target(condition_jump, true)?
-            != self.code.instructions[target_index].offset
+            != self.code.instructions[loop_exit_index].offset
         {
             return Err(unsupported("unsupported while loop control flow"));
         }
@@ -914,6 +924,25 @@ impl<'a> BytecodeParser<'a> {
             return Err(unsupported("unsupported while loop control flow"));
         };
         Ok(Some((condition_start, jump_index)))
+    }
+
+    fn only_generator_none_returns(&self, start: usize, end: usize) -> bool {
+        self.code.is_generator
+            && self.code.instructions[start..end].iter().enumerate().all(
+                |(relative_index, inst)| {
+                    self.is_return_const_none(start + relative_index)
+                        && inst.opcode == Opcode::ReturnConst
+                },
+            )
+    }
+
+    fn is_return_const_none(&self, index: usize) -> bool {
+        let inst = &self.code.instructions[index];
+        if inst.opcode != Opcode::ReturnConst {
+            return false;
+        }
+        let const_index = inst.arg.unwrap_or(0) as usize;
+        matches!(self.code.consts.get(const_index), Some(Constant::None))
     }
 
     fn condition_line(&self, jump_index: usize) -> Option<usize> {
