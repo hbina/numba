@@ -175,6 +175,11 @@ fn expr_to_py(py: Python<'_>, expr: &TypedExpr) -> PyResult<PyObject> {
                 ConstantValue::Str(value) => out.set_item("value", value)?,
             }
         }
+        TypedExprKind::Dtype(dtype) => {
+            out.set_item("kind", "Dtype")?;
+            out.set_item("reason", "module_global")?;
+            out.set_item("dtype", dtype.name())?;
+        }
         TypedExprKind::Name(name) => {
             out.set_item("kind", "Name")?;
             out.set_item("reason", "environment")?;

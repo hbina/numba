@@ -49,6 +49,9 @@ impl Emitter {
             "#include <stddef.h>".to_string(),
             "#include <math.h>".to_string(),
             String::new(),
+            "static int rumba_runtime_error = 0;".to_string(),
+            String::new(),
+            "typedef struct { uint8_t *data; int64_t len; } rumba_byte_buffer;".to_string(),
             "typedef struct { int64_t *data; int64_t len; } rumba_array_i64;".to_string(),
             "typedef struct { double *data; int64_t len; } rumba_array_f64;".to_string(),
             String::new(),
@@ -110,7 +113,7 @@ impl Emitter {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "__attribute__((visibility(\"default\"))) void rumba_call(void **args, void *ret) {{\n    *({} *)ret = rumba_entry({args});\n}}\n",
+            "__attribute__((visibility(\"default\"))) void rumba_call(void **args, void *ret) {{\n    rumba_runtime_error = 0;\n    *({} *)ret = rumba_entry({args});\n}}\n\n__attribute__((visibility(\"default\"))) int rumba_error_status(void) {{\n    return rumba_runtime_error;\n}}\n",
             self.function.return_type.c_type()
         )
     }
@@ -143,6 +146,13 @@ impl Emitter {
                 };
                 self.lines
                     .push(format!("{}{prefix}{name} = {};", indent(level), expr.code));
+                if is_frombuffer_expr(value) {
+                    self.lines.push(format!(
+                        "{}if (rumba_runtime_error != 0) {{ return {}; }}",
+                        indent(level),
+                        self.default_return_literal()
+                    ));
+                }
             }
             TypedStmt::AugAssign {
                 name, op, value, ..
@@ -510,6 +520,9 @@ impl Emitter {
                     }
                 },
             }),
+            TypedExprKind::Dtype(_) => Err(unsupported(
+                "numpy dtype objects are only supported as np.frombuffer dtype arguments",
+            )),
             TypedExprKind::Name(name) => Ok(CExpr { code: name.clone() }),
             TypedExprKind::Call { function, args } => {
                 let key = helper_key(function);
@@ -602,6 +615,23 @@ impl Emitter {
         args: &[TypedExpr],
         return_type: RumbaType,
     ) -> PyResult<CExpr> {
+        if intrinsic == IntrinsicId::NumpyFromBuffer {
+            let buffer = self.expr(&args[0])?.code;
+            let count = self.expr(&args[2])?.code;
+            let offset = self.expr(&args[3])?.code;
+            let dtype = match &args[1].kind {
+                TypedExprKind::Dtype(dtype) => dtype,
+                _ => {
+                    return Err(unsupported(
+                        "np.frombuffer dtype must be a module-level numpy dtype object",
+                    ));
+                }
+            };
+            let helper = self.ensure_frombuffer_helper(dtype);
+            return Ok(CExpr {
+                code: format!("{helper}({buffer}, {count}, {offset})"),
+            });
+        }
         let arg_codes = args
             .iter()
             .map(|arg| self.expr(arg).map(|expr| expr.code))
@@ -659,10 +689,15 @@ impl Emitter {
                     RumbaType::Array1DStruct(_) => {
                         unreachable!("numpy reductions reject structured arrays during typing")
                     }
-                    RumbaType::Scalar(_) => unreachable!("numpy reductions require array"),
+                    RumbaType::Scalar(_) | RumbaType::ByteBuffer | RumbaType::Dtype(_) => {
+                        unreachable!("numpy reductions require array")
+                    }
                 };
                 let helper = self.ensure_numpy_reduction_helper(intrinsic, array_type);
                 format!("{helper}({})", arg_codes[0])
+            }
+            IntrinsicId::NumpyFromBuffer => {
+                unreachable!("np.frombuffer is handled before generic intrinsic argument emission")
             }
         };
         Ok(CExpr { code })
@@ -735,6 +770,58 @@ impl Emitter {
         self.intrinsic_cache.insert(key.clone(), key.clone());
         key
     }
+
+    fn ensure_frombuffer_helper(&mut self, dtype: &DtypeSpec) -> String {
+        let (array_type, element_type, itemsize, key_part) = match dtype {
+            DtypeSpec::Scalar(ScalarType::Int64) => (
+                "rumba_array_i64".to_string(),
+                "int64_t".to_string(),
+                8,
+                "i64".to_string(),
+            ),
+            DtypeSpec::Scalar(ScalarType::Float64) => (
+                "rumba_array_f64".to_string(),
+                "double".to_string(),
+                8,
+                "f64".to_string(),
+            ),
+            DtypeSpec::Scalar(ScalarType::Bool) => {
+                unreachable!("bool dtype rejected by np.frombuffer typing")
+            }
+            DtypeSpec::Struct(dtype) => (
+                dtype.c_array_name.clone(),
+                dtype.c_struct_name.clone(),
+                dtype.itemsize,
+                dtype.c_struct_name.clone(),
+            ),
+        };
+        let key = format!("rumba_numpy_frombuffer_{key_part}");
+        if let Some(c_name) = self.intrinsic_cache.get(&key) {
+            return c_name.clone();
+        }
+        let source = frombuffer_source(&key, &array_type, &element_type, itemsize);
+        self.helper_sources.push(source);
+        self.intrinsic_cache.insert(key.clone(), key.clone());
+        key
+    }
+
+    fn default_return_literal(&self) -> &'static str {
+        match self.function.return_type {
+            ScalarType::Int64 => "0",
+            ScalarType::Float64 => "0.0",
+            ScalarType::Bool => "false",
+        }
+    }
+}
+
+fn is_frombuffer_expr(expr: &TypedExpr) -> bool {
+    matches!(
+        expr.kind,
+        TypedExprKind::IntrinsicCall {
+            intrinsic: IntrinsicId::NumpyFromBuffer,
+            ..
+        }
+    )
 }
 
 fn collect_struct_dtypes(function: &TypedFunction) -> Vec<StructDtype> {
@@ -1014,6 +1101,38 @@ fn numpy_reduction_source(name: &str, intrinsic: IntrinsicId, element_type: Scal
     lines.push("    return out;".to_string());
     lines.push("}".to_string());
     format!("{}\n", lines.join("\n"))
+}
+
+fn frombuffer_source(
+    name: &str,
+    array_type: &str,
+    element_type: &str,
+    itemsize: usize,
+) -> String {
+    [
+        format!(
+            "static {array_type} {name}(rumba_byte_buffer buf, int64_t count, int64_t offset) {{"
+        ),
+        format!("    {array_type} out;"),
+        "    out.data = 0;".to_string(),
+        "    out.len = 0;".to_string(),
+        "    if (offset < 0 || count < 0) {".to_string(),
+        "        rumba_runtime_error = 1;".to_string(),
+        "        return out;".to_string(),
+        "    }".to_string(),
+        "    if (offset > buf.len || count > ((buf.len - offset) / ".to_string()
+            + &itemsize.to_string()
+            + ")) {",
+        "        rumba_runtime_error = 1;".to_string(),
+        "        return out;".to_string(),
+        "    }".to_string(),
+        format!("    out.data = ({element_type} *)(buf.data + offset);"),
+        "    out.len = count;".to_string(),
+        "    return out;".to_string(),
+        "}".to_string(),
+    ]
+    .join("\n")
+        + "\n"
 }
 
 trait UnarySymbol {

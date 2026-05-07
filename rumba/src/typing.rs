@@ -297,6 +297,11 @@ impl TypePass {
             }
             StmtNode::Assign { name, value } => {
                 let expr = self.expr(value)?;
+                if is_frombuffer_expr(&expr) {
+                    self.frombuffer_locals.insert(name.clone());
+                } else {
+                    self.frombuffer_locals.remove(name);
+                }
                 self.env.insert(name.clone(), expr.typ.clone());
                 Ok(TypedStmt::Assign {
                     name: name.clone(),
@@ -806,7 +811,8 @@ impl TypePass {
                         .as_scalar()
                         .ok_or_else(|| unsupported("comparisons require scalar operands"))?,
                     op,
-                    right.typ
+                    right
+                        .typ
                         .as_scalar()
                         .ok_or_else(|| unsupported("comparisons require scalar operands"))?,
                 )?;
@@ -984,7 +990,10 @@ fn type_compare(left: ScalarType, op: &crate::ir::CmpOp, right: ScalarType) -> P
     }
     match op {
         crate::ir::CmpOp::Eq | crate::ir::CmpOp::NotEq => Ok(()),
-        crate::ir::CmpOp::Lt | crate::ir::CmpOp::LtE | crate::ir::CmpOp::Gt | crate::ir::CmpOp::GtE => {
+        crate::ir::CmpOp::Lt
+        | crate::ir::CmpOp::LtE
+        | crate::ir::CmpOp::Gt
+        | crate::ir::CmpOp::GtE => {
             if left.is_numeric() {
                 Ok(())
             } else {

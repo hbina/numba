@@ -7,6 +7,7 @@ use crate::intrinsics::IntrinsicId;
 use crate::ir::{
     BinOp, CallTarget, CmpOp, ConstantValue, ExprNode, ParsedFunction, StmtNode, UnaryOp,
 };
+use crate::types::DtypeSpec;
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -266,7 +267,14 @@ impl<'a> BytecodeParser<'a> {
                 Opcode::LoadFast | Opcode::LoadFastCheck => {
                     stack.push(StackValue::Expr(ExprNode::Name(self.local_name(inst)?)))
                 }
-                Opcode::LoadGlobal => stack.push(StackValue::Name(self.name_operand(inst)?)),
+                Opcode::LoadGlobal => {
+                    let name = self.name_operand(inst)?;
+                    if let Some(dtype) = self.global_dtype(&name)? {
+                        stack.push(StackValue::Expr(ExprNode::Dtype(dtype)));
+                    } else {
+                        stack.push(StackValue::Name(name));
+                    }
+                }
                 Opcode::LoadAttr => {
                     let attr = self.name_operand(inst)?;
                     match pop_stack(&mut stack)? {
@@ -713,6 +721,22 @@ impl<'a> BytecodeParser<'a> {
         global_name_index(inst.arg.unwrap_or(0))
             .and_then(|index| self.code.names.get(index).cloned())
             .ok_or_else(|| unsupported("name index out of range"))
+    }
+
+    fn global_dtype(&self, name: &str) -> PyResult<Option<DtypeSpec>> {
+        let Some(value) = self.globals.get_item(name)? else {
+            return Ok(None);
+        };
+        let py = value.py();
+        let numpy = match py.import_bound("numpy") {
+            Ok(numpy) => numpy,
+            Err(_) => return Ok(None),
+        };
+        let dtype_type = numpy.getattr("dtype")?;
+        if !value.is_instance(&dtype_type)? {
+            return Ok(None);
+        }
+        DtypeSpec::from_numpy_dtype(&value).map(Some)
     }
 
     fn jump_target(&self, inst: &BytecodeInstruction, forward: bool) -> PyResult<usize> {

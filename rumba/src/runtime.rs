@@ -22,6 +22,13 @@ struct ArrayF64View {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
+struct ByteBufferView {
+    data: *mut u8,
+    len: i64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
 struct ArrayStructView {
     data: *mut c_void,
     len: i64,
@@ -35,6 +42,7 @@ enum NativeArg {
     ArrayI64(ArrayI64View),
     ArrayF64(ArrayF64View),
     ArrayStruct(ArrayStructView),
+    ByteBuffer(ByteBufferView),
 }
 
 pub(crate) fn call_native(
@@ -75,6 +83,10 @@ pub(crate) fn call_native(
         }
         let f: libloading::Symbol<unsafe extern "C" fn(*mut *mut c_void, *mut c_void)> =
             artifact.library.get(b"rumba_call").map_err(load_error)?;
+        let status_fn: libloading::Symbol<unsafe extern "C" fn() -> i32> = artifact
+            .library
+            .get(b"rumba_error_status")
+            .map_err(load_error)?;
         match artifact.return_type {
             ScalarType::Int64 => {
                 let mut ret = 0_i64;
@@ -82,6 +94,7 @@ pub(crate) fn call_native(
                     call.arg_ptrs.as_mut_ptr(),
                     (&mut ret as *mut i64).cast::<c_void>(),
                 );
+                check_status(status_fn())?;
                 Ok(ret.into_py(py))
             }
             ScalarType::Float64 => {
@@ -90,6 +103,7 @@ pub(crate) fn call_native(
                     call.arg_ptrs.as_mut_ptr(),
                     (&mut ret as *mut f64).cast::<c_void>(),
                 );
+                check_status(status_fn())?;
                 Ok(ret.into_py(py))
             }
             ScalarType::Bool => {
@@ -98,6 +112,7 @@ pub(crate) fn call_native(
                     call.arg_ptrs.as_mut_ptr(),
                     (&mut ret as *mut bool).cast::<c_void>(),
                 );
+                check_status(status_fn())?;
                 Ok(ret.into_py(py))
             }
         }
@@ -120,6 +135,7 @@ impl PreparedCall {
                 NativeArg::ArrayI64(value) => (value as *mut ArrayI64View).cast::<c_void>(),
                 NativeArg::ArrayF64(value) => (value as *mut ArrayF64View).cast::<c_void>(),
                 NativeArg::ArrayStruct(value) => (value as *mut ArrayStructView).cast::<c_void>(),
+                NativeArg::ByteBuffer(value) => (value as *mut ByteBufferView).cast::<c_void>(),
             })
             .collect();
         Self { args, arg_ptrs }
@@ -154,6 +170,26 @@ fn prepare_arg(
             let (data, len) = validate_struct_array(arg, dtype, require_writable_array)?;
             Ok(NativeArg::ArrayStruct(ArrayStructView { data, len }))
         }
+        RumbaType::ByteBuffer => {
+            let (data, len) = validate_array(arg, "uint8", false)?;
+            Ok(NativeArg::ByteBuffer(ByteBufferView {
+                data: data as *mut u8,
+                len,
+            }))
+        }
+        RumbaType::Dtype(_) => Err(unsupported(
+            "numpy dtype objects are only supported as np.frombuffer dtype arguments",
+        )),
+    }
+}
+
+fn check_status(status: i32) -> PyResult<()> {
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(unsupported(
+            "np.frombuffer offset/count is negative or exceeds the source buffer length",
+        ))
     }
 }
 

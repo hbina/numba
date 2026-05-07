@@ -24,6 +24,7 @@ pub(crate) enum IntrinsicId {
     NumpyMax,
     NumpyMin,
     NumpySum,
+    NumpyFromBuffer,
 }
 
 impl IntrinsicId {
@@ -53,6 +54,7 @@ impl IntrinsicId {
             ("numpy", "max") => Some(Self::NumpyMax),
             ("numpy", "min") => Some(Self::NumpyMin),
             ("numpy", "sum") => Some(Self::NumpySum),
+            ("numpy", "frombuffer") => Some(Self::NumpyFromBuffer),
             _ => None,
         }
     }
@@ -77,6 +79,7 @@ impl IntrinsicId {
             Self::NumpyMax => "numpy.max",
             Self::NumpyMin => "numpy.min",
             Self::NumpySum => "numpy.sum",
+            Self::NumpyFromBuffer => "numpy.frombuffer",
         }
     }
 
@@ -88,7 +91,9 @@ impl IntrinsicId {
                     RumbaType::Array1D(_) | RumbaType::Array1DStruct(_) => {
                         Ok(RumbaType::Scalar(ScalarType::Int64))
                     }
-                    RumbaType::Scalar(_) => Err(unsupported("len expects a 1D numpy array")),
+                    RumbaType::Scalar(_) | RumbaType::ByteBuffer | RumbaType::Dtype(_) => {
+                        Err(unsupported("len expects a 1D numpy array"))
+                    }
                 }
             }
             Self::BuiltinMin | Self::BuiltinMax => {
@@ -164,10 +169,36 @@ impl IntrinsicId {
                         "{} does not support structured arrays; read a field first",
                         self.name()
                     ))),
-                    RumbaType::Scalar(_) => Err(unsupported(format!(
+                    RumbaType::Scalar(_) | RumbaType::ByteBuffer | RumbaType::Dtype(_) => Err(unsupported(format!(
                         "{} expects a 1D numpy array",
                         self.name()
                     ))),
+                }
+            }
+            Self::NumpyFromBuffer => {
+                require_arg_count(self, args, 4)?;
+                if args[0].typ != RumbaType::ByteBuffer {
+                    return Err(unsupported(
+                        "np.frombuffer source must be a 1D uint8 numpy array or memmap",
+                    ));
+                }
+                let dtype = match &args[1].typ {
+                    RumbaType::Dtype(dtype) => dtype,
+                    _ => {
+                        return Err(unsupported(
+                            "np.frombuffer dtype must be a module-level numpy dtype object",
+                        ));
+                    }
+                };
+                if args[2].typ != RumbaType::Scalar(ScalarType::Int64) {
+                    return Err(unsupported("np.frombuffer count must be an int64 scalar"));
+                }
+                if args[3].typ != RumbaType::Scalar(ScalarType::Int64) {
+                    return Err(unsupported("np.frombuffer offset must be an int64 scalar"));
+                }
+                match dtype {
+                    crate::types::DtypeSpec::Scalar(typ) => Ok(RumbaType::Array1D(*typ)),
+                    crate::types::DtypeSpec::Struct(dtype) => Ok(RumbaType::Array1DStruct(dtype.clone())),
                 }
             }
         }

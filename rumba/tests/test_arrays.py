@@ -4,6 +4,24 @@ import pytest
 import rumba
 from rumba import RumbaUnsupportedError
 
+PCAP_HEADER_DTYPE = np.dtype(
+    [
+        ("ts_sec", np.uint32),
+        ("ts_usec", np.uint32),
+        ("incl_len", np.uint32),
+        ("orig_len", np.uint32),
+    ]
+)
+INT64_DTYPE = np.dtype("int64")
+UNALIGNED_HEADER_DTYPE = np.dtype(
+    {
+        "names": ["pad", "incl_len"],
+        "formats": ["u1", "u4"],
+        "offsets": [0, 1],
+        "itemsize": 5,
+    }
+)
+
 
 @rumba.njit
 def _first(a):
@@ -519,6 +537,150 @@ def test_while_reads_and_writes_structured_array_fields():
 
     assert scale_counts(values, 3) == pytest.approx(12.0)
     assert values["weight"].tolist() == pytest.approx([2.0, 4.0, 6.0])
+
+
+def test_numpy_frombuffer_reads_structured_header_from_uint8_buffer():
+    @rumba.njit
+    def incl_len(buf):
+        header = np.frombuffer(buf, PCAP_HEADER_DTYPE, 1, 0)
+        return header[0]["incl_len"]
+
+    records = np.array([(1, 2, 64, 128)], dtype=PCAP_HEADER_DTYPE)
+    buf = records.view(np.uint8)
+
+    assert incl_len(buf) == 64
+
+
+def test_numpy_frombuffer_reads_structured_header_from_uint8_memmap(tmp_path):
+    @rumba.njit
+    def orig_len(buf):
+        header = np.frombuffer(buf, PCAP_HEADER_DTYPE, 1, 0)
+        return header[0]["orig_len"]
+
+    path = tmp_path / "packet.bin"
+    records = np.array([(1, 2, 64, 128)], dtype=PCAP_HEADER_DTYPE)
+    path.write_bytes(records.view(np.uint8).tobytes())
+    buf = np.memmap(path, dtype=np.uint8, mode="r")
+
+    assert orig_len(buf) == 128
+
+
+def test_numpy_frombuffer_dynamic_offsets_parse_multiple_records():
+    @rumba.njit
+    def incl_len_at(buf, index):
+        offset = index * 16
+        header = np.frombuffer(buf, PCAP_HEADER_DTYPE, 1, offset)
+        return header[0]["incl_len"]
+
+    records = np.array([(1, 2, 64, 128), (3, 4, 256, 512)], dtype=PCAP_HEADER_DTYPE)
+    buf = records.view(np.uint8)
+
+    assert incl_len_at(buf, 0) == 64
+    assert incl_len_at(buf, 1) == 256
+
+
+def test_numpy_frombuffer_inspects_as_intrinsic_and_pointer_cast_view():
+    @rumba.njit
+    def incl_len(buf):
+        header = np.frombuffer(buf, PCAP_HEADER_DTYPE, 1, 0)
+        return header[0]["incl_len"]
+
+    records = np.array([(1, 2, 64, 128)], dtype=PCAP_HEADER_DTYPE)
+
+    assert incl_len(records.view(np.uint8)) == 64
+    typed = incl_len.inspect_typed_ast()
+    assign = typed["body"][0]
+    assert assign["value"]["kind"] == "IntrinsicCall"
+    assert assign["value"]["intrinsic"] == "numpy.frombuffer"
+    assert assign["target_type"] == "array(struct{ts_sec:u32,ts_usec:u32,incl_len:u32,orig_len:u32}, 1d, C)"
+
+    c_source = incl_len.inspect_c()
+    assert "static rumba_array_rumba_struct_ts_sec_u32_ts_usec_u32_incl_len_u32_orig_len_u32 rumba_numpy_frombuffer_" in c_source
+    assert "(rumba_struct_ts_sec_u32_ts_usec_u32_incl_len_u32_orig_len_u32 *)(buf.data + offset)" in c_source
+    assert "offset < 0 || count < 0" in c_source
+
+
+def test_numpy_frombuffer_rejects_keyword_form():
+    @rumba.njit
+    def incl_len(buf):
+        header = np.frombuffer(buf, dtype=PCAP_HEADER_DTYPE, count=1, offset=0)
+        return header[0]["incl_len"]
+
+    buf = np.zeros(16, dtype=np.uint8)
+
+    with pytest.raises(RumbaUnsupportedError, match="keyword calls"):
+        incl_len(buf)
+
+
+def test_numpy_frombuffer_rejects_inline_dtype_constructor():
+    @rumba.njit
+    def incl_len(buf):
+        header = np.frombuffer(buf, np.dtype([("incl_len", np.uint32)]), 1, 0)
+        return header[0]["incl_len"]
+
+    buf = np.zeros(4, dtype=np.uint8)
+
+    with pytest.raises(RumbaUnsupportedError):
+        incl_len(buf)
+
+
+def test_numpy_frombuffer_rejects_non_uint8_source_buffer():
+    @rumba.njit
+    def first_value(buf):
+        values = np.frombuffer(buf, INT64_DTYPE, 1, 0)
+        return values[0]
+
+    with pytest.raises(RumbaUnsupportedError, match="source must be a 1D uint8"):
+        first_value(np.zeros(2, dtype=np.int64))
+
+
+@pytest.mark.parametrize(("count", "offset"), [(-1, 0), (1, -1), (2, 0), (1, 8)])
+def test_numpy_frombuffer_rejects_negative_or_out_of_bounds_views(count, offset):
+    @rumba.njit
+    def incl_len(buf, count, offset):
+        header = np.frombuffer(buf, PCAP_HEADER_DTYPE, count, offset)
+        return header[0]["incl_len"]
+
+    buf = np.zeros(16, dtype=np.uint8)
+
+    with pytest.raises(RumbaUnsupportedError, match="offset/count"):
+        incl_len(buf, count, offset)
+
+
+def test_numpy_frombuffer_rejects_unaligned_structured_dtype():
+    @rumba.njit
+    def read_value(buf):
+        header = np.frombuffer(buf, UNALIGNED_HEADER_DTYPE, 1, 0)
+        return header[0]["incl_len"]
+
+    buf = np.zeros(5, dtype=np.uint8)
+
+    with pytest.raises(RumbaUnsupportedError, match="alignment"):
+        read_value(buf)
+
+
+def test_numpy_frombuffer_returned_view_is_unsupported():
+    @rumba.njit
+    def view(buf):
+        return np.frombuffer(buf, PCAP_HEADER_DTYPE, 1, 0)
+
+    buf = np.zeros(16, dtype=np.uint8)
+
+    with pytest.raises(RumbaUnsupportedError, match="array return values"):
+        view(buf)
+
+
+def test_numpy_frombuffer_assignment_through_view_is_unsupported():
+    @rumba.njit
+    def mutate(buf):
+        header = np.frombuffer(buf, PCAP_HEADER_DTYPE, 1, 0)
+        header[0]["incl_len"] = 9
+        return header[0]["incl_len"]
+
+    buf = np.zeros(16, dtype=np.uint8)
+
+    with pytest.raises(RumbaUnsupportedError, match="assigning through np.frombuffer"):
+        mutate(buf)
 
 
 def test_structured_array_bare_record_read_is_unsupported():
