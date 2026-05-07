@@ -5,7 +5,9 @@ use pyo3::prelude::*;
 use crate::errors::unsupported;
 use crate::intrinsics::IntrinsicId;
 use crate::types::{DtypeSpec, RumbaType, ScalarType, StructDtype};
-use crate::typing::{helper_key, TypedExpr, TypedExprKind, TypedFunction, TypedStmt};
+use crate::typing::{
+    helper_key, TypedExpr, TypedExprKind, TypedFunction, TypedPrintArg, TypedStmt,
+};
 
 struct CExpr {
     code: String,
@@ -47,6 +49,7 @@ impl Emitter {
             "#include <stdbool.h>".to_string(),
             "#include <stdint.h>".to_string(),
             "#include <stddef.h>".to_string(),
+            "#include <stdio.h>".to_string(),
             "#include <math.h>".to_string(),
             String::new(),
             "static int rumba_runtime_error = 0;".to_string(),
@@ -130,6 +133,7 @@ impl Emitter {
                     "yield is only supported inside generator helper loops",
                 ));
             }
+            TypedStmt::Print(args) => self.print_stmt(args, level, None)?,
             TypedStmt::Break => {
                 self.lines.push(format!("{}break;", indent(level)));
             }
@@ -324,6 +328,7 @@ impl Emitter {
                     "return values from generator helpers are not supported",
                 ));
             }
+            TypedStmt::Print(args) => self.print_stmt(args, level, Some(inline.names))?,
             TypedStmt::Break => self.lines.push(format!("{}break;", indent(level))),
             TypedStmt::Continue => self.lines.push(format!("{}continue;", indent(level))),
             TypedStmt::Assign { name, value } => {
@@ -504,6 +509,49 @@ impl Emitter {
         Ok(())
     }
 
+    fn print_stmt(
+        &mut self,
+        args: &[TypedPrintArg],
+        level: usize,
+        names: Option<&HashMap<String, String>>,
+    ) -> PyResult<()> {
+        for (index, arg) in args.iter().enumerate() {
+            if index > 0 {
+                self.lines
+                    .push(format!("{}fputc(' ', stdout);", indent(level)));
+            }
+            match arg {
+                TypedPrintArg::StaticStr(value) => {
+                    self.lines.push(format!(
+                        "{}fputs({}, stdout);",
+                        indent(level),
+                        c_string_literal(value)
+                    ));
+                }
+                TypedPrintArg::Expr(expr) => {
+                    let code = if let Some(names) = names {
+                        self.expr_renamed(expr, names)?.code
+                    } else {
+                        self.expr(expr)?.code
+                    };
+                    let scalar_type = expr.typ.as_scalar().expect("typed print scalar argument");
+                    let line = match scalar_type {
+                        ScalarType::Int64 => format!("printf(\"%lld\", (long long)({code}));"),
+                        ScalarType::Float64 => format!("printf(\"%.17g\", (double)({code}));"),
+                        ScalarType::Bool => {
+                            format!("fputs(({code}) ? \"True\" : \"False\", stdout);")
+                        }
+                    };
+                    self.lines.push(format!("{}{}", indent(level), line));
+                }
+            }
+        }
+        self.lines
+            .push(format!("{}fputc('\\n', stdout);", indent(level)));
+        self.lines.push(format!("{}fflush(stdout);", indent(level)));
+        Ok(())
+    }
+
     fn expr(&mut self, node: &TypedExpr) -> PyResult<CExpr> {
         match &node.kind {
             TypedExprKind::Constant(value) => Ok(CExpr {
@@ -637,6 +685,9 @@ impl Emitter {
             .map(|arg| self.expr(arg).map(|expr| expr.code))
             .collect::<PyResult<Vec<_>>>()?;
         let code = match intrinsic {
+            IntrinsicId::BuiltinPrint => {
+                unreachable!("print is emitted as a statement")
+            }
             IntrinsicId::BuiltinLen => format!("{}.len", arg_codes[0]),
             IntrinsicId::BuiltinAbs => {
                 let scalar_type = args[0].typ.as_scalar().expect("typed scalar abs");
@@ -895,6 +946,13 @@ fn collect_struct_dtypes_from_stmt(stmt: &TypedStmt, out: &mut Vec<StructDtype>)
         TypedStmt::Return(value) | TypedStmt::Yield(value) | TypedStmt::Assign { value, .. } => {
             collect_struct_dtypes_from_expr(value, out);
         }
+        TypedStmt::Print(args) => {
+            for arg in args {
+                if let TypedPrintArg::Expr(expr) = arg {
+                    collect_struct_dtypes_from_expr(expr, out);
+                }
+            }
+        }
         TypedStmt::Break | TypedStmt::Continue => {}
         TypedStmt::AugAssign {
             value, target_type, ..
@@ -1054,6 +1112,23 @@ fn indent(level: usize) -> String {
     "    ".repeat(level)
 }
 
+fn c_string_literal(value: &str) -> String {
+    let mut out = String::from("\"");
+    for byte in value.bytes() {
+        match byte {
+            b'\\' => out.push_str("\\\\"),
+            b'"' => out.push_str("\\\""),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            0x20..=0x7e => out.push(byte as char),
+            byte => out.push_str(&format!("\\{byte:03o}")),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn abs_i64_source() -> String {
     [
         "static int64_t rumba_abs_i64(int64_t value) {",
@@ -1103,12 +1178,7 @@ fn numpy_reduction_source(name: &str, intrinsic: IntrinsicId, element_type: Scal
     format!("{}\n", lines.join("\n"))
 }
 
-fn frombuffer_source(
-    name: &str,
-    array_type: &str,
-    element_type: &str,
-    itemsize: usize,
-) -> String {
+fn frombuffer_source(name: &str, array_type: &str, element_type: &str, itemsize: usize) -> String {
     [
         format!(
             "static {array_type} {name}(rumba_byte_buffer buf, int64_t count, int64_t offset) {{"

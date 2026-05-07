@@ -32,6 +32,7 @@ pub(crate) struct TypedGeneratorFunction {
 pub(crate) enum TypedStmt {
     Return(TypedExpr),
     Yield(TypedExpr),
+    Print(Vec<TypedPrintArg>),
     Break,
     Continue,
     Assign {
@@ -80,6 +81,12 @@ pub(crate) enum TypedStmt {
         args: Vec<TypedExpr>,
         body: Vec<TypedStmt>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum TypedPrintArg {
+    StaticStr(String),
+    Expr(TypedExpr),
 }
 
 #[derive(Clone, Debug)]
@@ -283,6 +290,11 @@ impl TypePass {
                 });
                 Ok(TypedStmt::Yield(expr))
             }
+            StmtNode::Print(args) => args
+                .iter()
+                .map(|arg| self.print_arg(arg))
+                .collect::<PyResult<Vec<_>>>()
+                .map(TypedStmt::Print),
             StmtNode::Break => {
                 if self.loop_depth == 0 {
                     return Err(unsupported("break is only supported inside loops"));
@@ -826,6 +838,19 @@ impl TypePass {
                 })
             }
         }
+    }
+
+    fn print_arg(&mut self, node: &ExprNode) -> PyResult<TypedPrintArg> {
+        if let ExprNode::Constant(ConstantValue::Str(value)) = node {
+            return Ok(TypedPrintArg::StaticStr(value.clone()));
+        }
+        let expr = self.expr(node)?;
+        if expr.typ.as_scalar().is_none() {
+            return Err(unsupported(
+                "print arguments must be scalar values or string literals",
+            ));
+        }
+        Ok(TypedPrintArg::Expr(expr))
     }
 
     fn is_frombuffer_view(&self, expr: &TypedExpr) -> bool {

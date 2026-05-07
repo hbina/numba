@@ -6,6 +6,7 @@ use crate::typing::TypedExpr;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum IntrinsicId {
+    BuiltinPrint,
     BuiltinLen,
     BuiltinMin,
     BuiltinMax,
@@ -30,6 +31,7 @@ pub(crate) enum IntrinsicId {
 impl IntrinsicId {
     pub(crate) fn from_builtin(name: &str) -> Option<Self> {
         match name {
+            "print" => Some(Self::BuiltinPrint),
             "len" => Some(Self::BuiltinLen),
             "min" => Some(Self::BuiltinMin),
             "max" => Some(Self::BuiltinMax),
@@ -61,6 +63,7 @@ impl IntrinsicId {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::BuiltinPrint => "print",
             Self::BuiltinLen => "len",
             Self::BuiltinMin => "min",
             Self::BuiltinMax => "max",
@@ -85,6 +88,9 @@ impl IntrinsicId {
 
     pub(crate) fn type_call(self, args: &[TypedExpr]) -> PyResult<RumbaType> {
         match self {
+            Self::BuiltinPrint => Err(unsupported(
+                "print is only supported as a statement, not as a value",
+            )),
             Self::BuiltinLen => {
                 require_arg_count(self, args, 1)?;
                 match args[0].typ {
@@ -169,10 +175,9 @@ impl IntrinsicId {
                         "{} does not support structured arrays; read a field first",
                         self.name()
                     ))),
-                    RumbaType::Scalar(_) | RumbaType::ByteBuffer | RumbaType::Dtype(_) => Err(unsupported(format!(
-                        "{} expects a 1D numpy array",
-                        self.name()
-                    ))),
+                    RumbaType::Scalar(_) | RumbaType::ByteBuffer | RumbaType::Dtype(_) => Err(
+                        unsupported(format!("{} expects a 1D numpy array", self.name())),
+                    ),
                 }
             }
             Self::NumpyFromBuffer => {
@@ -198,7 +203,9 @@ impl IntrinsicId {
                 }
                 match dtype {
                     crate::types::DtypeSpec::Scalar(typ) => Ok(RumbaType::Array1D(*typ)),
-                    crate::types::DtypeSpec::Struct(dtype) => Ok(RumbaType::Array1DStruct(dtype.clone())),
+                    crate::types::DtypeSpec::Struct(dtype) => {
+                        Ok(RumbaType::Array1DStruct(dtype.clone()))
+                    }
                 }
             }
         }

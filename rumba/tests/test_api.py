@@ -2,6 +2,7 @@ from pathlib import Path
 import math
 import math as m
 
+import numpy as np
 import pytest
 
 import rumba
@@ -124,6 +125,31 @@ def test_njit_call_decorator_executes_float_branch():
 
     assert choose(1.5, 4.0) == pytest.approx(2.5)
     assert "if" in choose.inspect_c()
+
+
+def test_print_supports_static_string_literals_and_scalars(capfd):
+    @rumba.njit
+    def report(value):
+        print("hello", value, "world")
+        return value + 1
+
+    assert report(5) == 6
+    assert capfd.readouterr().out == "hello 5 world\n"
+
+    c_source = report.inspect_c()
+    assert 'fputs("hello", stdout);' in c_source
+    assert 'fputs("world", stdout);' in c_source
+
+
+def test_print_rejects_array_arguments():
+    @rumba.njit
+    def report(values):
+        print("values", values)
+        return 0
+
+    values = np.array([1, 2, 3], dtype=np.int64)
+    with pytest.raises(RumbaUnsupportedError, match="print arguments must be scalar"):
+        report(values)
 
 
 @pytest.mark.parametrize("op", _COMPARISON_OPERATORS)

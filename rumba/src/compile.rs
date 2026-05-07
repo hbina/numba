@@ -161,6 +161,7 @@ fn has_store_index(body: &[StmtNode]) -> bool {
         }
         StmtNode::Return(_)
         | StmtNode::Yield(_)
+        | StmtNode::Print(_)
         | StmtNode::Break
         | StmtNode::Continue
         | StmtNode::Assign { .. }

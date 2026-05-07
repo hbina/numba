@@ -3,7 +3,7 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::ir::{BinOp, CmpOp, ConstantValue, UnaryOp};
 use crate::types::{FieldType, RumbaType, ScalarType};
-use crate::typing::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt};
+use crate::typing::{TypedExpr, TypedExprKind, TypedFunction, TypedPrintArg, TypedStmt};
 
 pub(crate) fn typed_function_to_py(py: Python<'_>, function: &TypedFunction) -> PyResult<PyObject> {
     let out = PyDict::new_bound(py);
@@ -45,6 +45,26 @@ fn stmts_to_py(py: Python<'_>, stmts: &[TypedStmt]) -> PyResult<PyObject> {
     Ok(out.into())
 }
 
+fn print_args_to_py(py: Python<'_>, args: &[TypedPrintArg]) -> PyResult<PyObject> {
+    let out = PyList::empty_bound(py);
+    for arg in args {
+        let item = PyDict::new_bound(py);
+        match arg {
+            TypedPrintArg::StaticStr(value) => {
+                item.set_item("kind", "StaticStr")?;
+                item.set_item("value", value)?;
+            }
+            TypedPrintArg::Expr(expr) => {
+                item.set_item("kind", "Expr")?;
+                item.set_item("value_type", expr.typ.name())?;
+                item.set_item("value", expr_to_py(py, expr)?)?;
+            }
+        }
+        out.append(item)?;
+    }
+    Ok(out.into())
+}
+
 fn stmt_to_py(py: Python<'_>, stmt: &TypedStmt) -> PyResult<PyObject> {
     let out = PyDict::new_bound(py);
     match stmt {
@@ -57,6 +77,10 @@ fn stmt_to_py(py: Python<'_>, stmt: &TypedStmt) -> PyResult<PyObject> {
             out.set_item("kind", "Yield")?;
             out.set_item("value_type", value.typ.name())?;
             out.set_item("value", expr_to_py(py, value)?)?;
+        }
+        TypedStmt::Print(args) => {
+            out.set_item("kind", "Print")?;
+            out.set_item("args", print_args_to_py(py, args)?)?;
         }
         TypedStmt::Break => {
             out.set_item("kind", "Break")?;

@@ -12,6 +12,7 @@ pub(crate) struct ParsedFunction {
 pub(crate) enum StmtNode {
     Return(ExprNode),
     Yield(ExprNode),
+    Print(Vec<ExprNode>),
     Break,
     Continue,
     Assign {
@@ -63,6 +64,7 @@ impl StmtNode {
         match self {
             Self::Return(_) => "Return",
             Self::Yield(_) => "Yield",
+            Self::Print(_) => "Print",
             Self::Break => "Break",
             Self::Continue => "Continue",
             Self::Assign { .. } => "Assign",

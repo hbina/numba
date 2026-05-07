@@ -687,7 +687,18 @@ impl<'a> BytecodeParser<'a> {
                     }
                     return Ok((statements, index));
                 }
-                Opcode::EndFor | Opcode::PopTop => {}
+                Opcode::PopTop => {
+                    if let Some(value) = stack.pop() {
+                        match value {
+                            StackValue::Expr(ExprNode::Call {
+                                target: CallTarget::Intrinsic(IntrinsicId::BuiltinPrint),
+                                args,
+                            }) => statements.push(StmtNode::Print(args)),
+                            _ => {}
+                        }
+                    }
+                }
+                Opcode::EndFor => {}
                 Opcode::Unsupported(opcode) => {
                     return Err(unsupported(format!("unsupported bytecode opcode {opcode}")));
                 }
